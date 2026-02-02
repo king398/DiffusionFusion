@@ -1,0 +1,27 @@
+<component name="InspectionProjectProfileManager">
+  <profile version="1.0">
+    <option name="myName" value="Project Default" />
+    <inspection_tool class="PyPackageRequirementsInspection" enabled="true" level="WARNING" enabled_by_default="true">
+      <option name="ignoredPackages">
+        <list>
+          <option value="transformers" />
+          <option value="requests" />
+          <option value="beautifulsoup4" />
+          <option value="datasets" />
+          <option value="torch" />
+          <option value="tqdm" />
+          <option value="numpy" />
+          <option value="trl" />
+          <option value="python-dotenv" />
+          <option value="yfinance" />
+          <option value="pandas" />
+          <option value="matplotlib" />
+          <option value="fastapi" />
+          <option value="uvicorn" />
+          <option value="watchfiles" />
+          <option value="python-multipart" />
+        </list>
+      </option>
+    </inspection_tool>
+  </profile>
+</component>

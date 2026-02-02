@@ -1,0 +1,3 @@
+[submodule "JiT"]
+	path = JiT
+	url = https://github.com/LTH14/JiT.git
