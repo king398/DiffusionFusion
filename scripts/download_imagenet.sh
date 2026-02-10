@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # ====== Settings ======
-ROOT_DIR="/work/nvme/betw/msalunkhe/data/imagenet"
+ROOT_DIR="/projects/betw/msalunkhe/data/imagenet"
 URL_TRAIN="https://image-net.org/data/ILSVRC/2012/ILSVRC2012_img_train.tar"
 URL_VAL="https://image-net.org/data/ILSVRC/2012/ILSVRC2012_img_val.tar"
 URL_TEST="https://image-net.org/data/ILSVRC/2012/ILSVRC2012_img_test_v10102019.tar"
