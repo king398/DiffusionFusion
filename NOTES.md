@@ -1,0 +1,1 @@
+https://github.com/openai/guided-diffusion/tree/main/evaluations - Link to ADM evaluation suite for DiT
