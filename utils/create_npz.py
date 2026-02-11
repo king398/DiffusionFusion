@@ -16,3 +16,5 @@ def create_npz_from_sample_folder(sample_dir, num=50_000):
     np.savez(npz_path, arr_0=samples)
     print(f"Saved .npz file to {npz_path} [shape={samples.shape}].")
     return npz_path
+sample_dir = "/projects/betw/msalunkhe/DiT_generations/DiT-XL-2-pretrained-size-256-vae-ema-cfg-1.5-seed-0"
+create_npz_from_sample_folder(sample_dir)
