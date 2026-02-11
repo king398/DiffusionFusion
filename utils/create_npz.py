@@ -1,4 +1,3 @@
-import os
 from concurrent.futures import ProcessPoolExecutor
 
 import numpy as np
@@ -18,7 +17,7 @@ def create_npz_from_sample_folder(sample_dir, num=50_000, num_workers=None):
     Builds a single .npz file from a folder of .png samples.
     """
     if num_workers is None:
-        num_workers = os.cpu_count() or 1
+        num_workers = 16
 
     chunk_size = max(1, num // (num_workers * 8))
     jobs = ((i, sample_dir) for i in range(num))
