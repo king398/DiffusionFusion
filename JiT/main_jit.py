@@ -11,14 +11,14 @@ from torch.utils.tensorboard import SummaryWriter
 import torchvision.transforms as transforms
 import torchvision.datasets as datasets
 
-from util.crop import center_crop_arr
+from util.crop import center_crop_arr, transform
 import util.misc as misc
 
 import copy
 from engine_jit import train_one_epoch, evaluate
 
 from denoiser import Denoiser
-
+from datasets import load_dataset
 
 def get_args_parser():
     parser = argparse.ArgumentParser('JiT', add_help=False)
@@ -139,14 +139,11 @@ def main(args):
         log_writer = None
 
     # Data augmentation transforms
-    transform_train = transforms.Compose([
-        transforms.Lambda(lambda img: center_crop_arr(img, args.img_size)),
-        transforms.RandomHorizontalFlip(),
-        transforms.PILToTensor()
-    ])
+    
 
-    dataset_train = datasets.ImageFolder(os.path.join(
-        args.data_path, 'train'), transform=transform_train)
+    
+    dataset_train = load_dataset(args.data_path,split="train",num_proc=os.cpu_count())
+    dataset_train.set_transform(transform)
     print(dataset_train)
 
     sampler_train = torch.utils.data.DistributedSampler(

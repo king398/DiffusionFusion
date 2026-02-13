@@ -1,6 +1,8 @@
 import numpy as np
 from PIL import Image
 
+from torchvision import transforms
+
 
 def center_crop_arr(pil_image, image_size):
     """
@@ -21,3 +23,15 @@ def center_crop_arr(pil_image, image_size):
     crop_y = (arr.shape[0] - image_size) // 2
     crop_x = (arr.shape[1] - image_size) // 2
     return Image.fromarray(arr[crop_y: crop_y + image_size, crop_x: crop_x + image_size])
+
+
+def transform(examples):
+    examples["image"] = [transform_train(
+        image.convert("RGB")) for image in examples["image"]]
+
+
+transform_train = transforms.Compose([
+    transforms.Lambda(lambda img: center_crop_arr(img, 256)),
+    transforms.RandomHorizontalFlip(),
+    transforms.PILToTensor()
+])
