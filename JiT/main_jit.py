@@ -154,8 +154,7 @@ def main(args):
     dataset_train = dataset_train.with_format("torch")
     assert isinstance(dataset_train, torch.utils.data.IterableDataset)
 
-    
-    
+
 
     data_loader_train = torch.utils.data.DataLoader(
         dataset_train,
