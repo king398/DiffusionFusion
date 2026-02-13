@@ -9,7 +9,7 @@ os.environ['HF_HOME'] = "/work/nvme/betw/msalunkhe/data/huggingface"
 def transform(examples):
     examples["image"] = [transform_train(
         image.convert("RGB")) for image in examples["image"]]
-    return examples
+    return
 
 
 transform_train = transforms.Compose([
@@ -18,7 +18,7 @@ transform_train = transforms.Compose([
     transforms.PILToTensor()
 ])
 ds = load_dataset("/work/nvme/betw/msalunkhe/data/imagenet",
-                  split="train",num_proc=8)
+                  split="train")
 ds.set_transform(transform)
 sampler_train = torch.utils.data.DistributedSampler(
     ds, num_replicas=1, rank=0, shuffle=True
