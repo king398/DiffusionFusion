@@ -21,14 +21,14 @@ source /u/msalunkhe/.venv/bin/activate
 cd /u/msalunkhe/DiffusionFusion/JiT
 IMAGENET_PATH="/work/nvme/betw/msalunkhe/data/imagenet/"
 OUTPUT_DIR="/work/nvme/betw/msalunkhe/outputs/jit_training"
-torchrun --nproc_per_node=auto --nnodes=1 --node_rank=0 \
+OMP_NUM_THREADS=32 torchrun --nproc_per_node=auto --nnodes=1 --node_rank=0 \
 main_jit.py \
 --model JiT-B/16 \
 --proj_dropout 0.0 \
 --P_mean -0.8 --P_std 0.8 \
 --img_size 256 --noise_scale 1.0 \
---batch_size 32 --blr 5e-5 \
+--batch_size 128 --blr 5e-5 \
 --epochs 600 --warmup_epochs 5 \
---gen_bsz 32 --num_images 50000 --cfg 2.9 --interval_min 0.1 --interval_max 1.0 \
+--gen_bsz 128 --num_images 50000 --cfg 2.9 --interval_min 0.1 --interval_max 1.0 \
 --output_dir ${OUTPUT_DIR} --resume ${OUTPUT_DIR} \
 --data_path ${IMAGENET_PATH} --online_eval

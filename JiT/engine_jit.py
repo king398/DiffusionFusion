@@ -32,7 +32,7 @@ def train_one_epoch(model, model_without_ddp, data_loader, optimizer, device, ep
             optimizer, data_iter_step / steps_per_epoch + epoch, args)
 
         # normalize image to [-1, 1]
-        x = batch["image"].float() / 255.0
+        x = batch["image"].to(device, non_blocking=True).to(torch.float32).div_(255)
         labels = batch["label"]
         x = x * 2.0 - 1.0
         labels = labels.to(device, non_blocking=True)

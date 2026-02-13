@@ -1,5 +1,5 @@
 https://github.com/openai/guided-diffusion/tree/main/evaluations - Link to ADM evaluation suite for DiT, can be used for JiT. But JiT authors use torch fidelity 
-
+set -g mouse on add this to my tmux config 
 ![alt text](benchmark_results.png)
 
 https://huggingface.co/stabilityai/sdxl-vae - VAE to use for JiT VAE
