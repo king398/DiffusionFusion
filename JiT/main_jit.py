@@ -234,11 +234,12 @@ def main(args):
     # Training loop
     print(f"Start training for {args.epochs} epochs")
     start_time = time.time()
+    steps_per_epoch = 1_200_000 // eff_batch_size
     for epoch in range(args.start_epoch, args.epochs):
         
 
         train_one_epoch(model, model_without_ddp, data_loader_train,
-                        optimizer, device, epoch, log_writer=log_writer, args=args)
+                        optimizer, device, epoch, log_writer=log_writer, args=args, steps_per_epoch=steps_per_epoch)
 
         # Save checkpoint periodically
         if epoch % args.save_last_freq == 0 or epoch + 1 == args.epochs:
