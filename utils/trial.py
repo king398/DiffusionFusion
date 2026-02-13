@@ -30,7 +30,7 @@ def main():
     # Typical layouts:
     #   /.../imagenet/train/n01440764/xxx.JPEG
     # If your path already *is* the train folder, keep it as-is.
-    train_dir = "/work/nvme/betw/msalunkhe/data/imagenet/train"
+    train_dir = "/work/nvme/betw/msalunkhe/data/imagenet/"
 
     ds = load_dataset(
         train_dir,
