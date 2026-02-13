@@ -44,11 +44,11 @@ def main():
 
     # Apply your torchvision transform on-the-fly
     ds = ds.with_format("torch")  # ensure PIL objects come through
-    ds.map(transform)
+    ds.set_transform(transform)
 
     data_loader_train = torch.utils.data.DataLoader(
         ds,
-        batch_size=64,
+        batch_size=args.,
         num_workers=4,          # for IterableDataset, workers can help, but tune it
         pin_memory=True,
         persistent_workers=True,
