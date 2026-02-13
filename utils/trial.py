@@ -18,7 +18,7 @@ transform_train = transforms.Compose([
     transforms.PILToTensor()
 ])
 ds = load_dataset("/work/nvme/betw/msalunkhe/data/imagenet",
-                  split="train", num_proc=os.cpu_count())
+                  split="train",num_proc=8)
 ds.set_transform(transform)
 sampler_train = torch.utils.data.DistributedSampler(
     ds, num_replicas=1, rank=0, shuffle=True

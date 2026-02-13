@@ -28,6 +28,7 @@ def center_crop_arr(pil_image, image_size):
 def transform(examples):
     examples["image"] = [transform_train(
         image.convert("RGB")) for image in examples["image"]]
+    return examples
 
 
 transform_train = transforms.Compose([
