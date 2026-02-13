@@ -20,4 +20,4 @@ module load cuda/12.6.1
 cd /work/nvme/betw/msalunkhe/data/imagenet
 
 # Use all GPUs on the node
-unzip  imagenet-object-localization-challenge.zip -d extracted
+unzip  imagenet-object-localization-challenge.zip 
