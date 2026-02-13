@@ -116,6 +116,7 @@ class MetricLogger(object):
             header = ''
         start_time = time.time()
         end = time.time()
+        timing_warmup_steps = 20
         iter_time = SmoothedValue(fmt='{avg:.4f}')
         data_time = SmoothedValue(fmt='{avg:.4f}')
         space_fmt = ':' + str(len(str(steps_per_epoch))) + 'd'
@@ -132,29 +133,41 @@ class MetricLogger(object):
         log_msg = self.delimiter.join(log_msg)
         MB = 1024.0 * 1024.0
         for obj in iterable:
-            data_time.update(time.time() - end)
+            curr_data_time = time.time() - end
             yield obj
-            iter_time.update(time.time() - end)
+            curr_iter_time = time.time() - end
+            # Ignore startup warmup when reporting iteration/data timing and ETA.
+            if i >= timing_warmup_steps:
+                data_time.update(curr_data_time)
+                iter_time.update(curr_iter_time)
             if i % print_freq == 0 or i == steps_per_epoch - 1:
-                eta_seconds = iter_time.global_avg * (steps_per_epoch - i)
-                eta_string = str(datetime.timedelta(seconds=int(eta_seconds)))
+                if iter_time.count > 0:
+                    eta_seconds = iter_time.global_avg * (steps_per_epoch - i)
+                    eta_string = str(datetime.timedelta(seconds=int(eta_seconds)))
+                    iter_time_str = str(iter_time)
+                    data_time_str = str(data_time)
+                else:
+                    eta_string = 'n/a'
+                    iter_time_str = 'n/a'
+                    data_time_str = 'n/a'
                 if torch.cuda.is_available():
                     print(log_msg.format(
                         i, steps_per_epoch, eta=eta_string,
                         meters=str(self),
-                        time=str(iter_time), data=str(data_time),
+                        time=iter_time_str, data=data_time_str,
                         memory=torch.cuda.max_memory_allocated() / MB))
                 else:
                     print(log_msg.format(
                         i, steps_per_epoch, eta=eta_string,
                         meters=str(self),
-                        time=str(iter_time), data=str(data_time)))
+                        time=iter_time_str, data=data_time_str))
             i += 1
             end = time.time()
         total_time = time.time() - start_time
         total_time_str = str(datetime.timedelta(seconds=int(total_time)))
+        avg_iter_time = iter_time.global_avg if iter_time.count > 0 else total_time / max(steps_per_epoch, 1)
         print('{} Total time: {} ({:.4f} s / it)'.format(
-            header, total_time_str, total_time / steps_per_epoch))
+            header, total_time_str, avg_iter_time))
 
 
 def setup_for_distributed(is_master):
