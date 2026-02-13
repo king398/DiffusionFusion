@@ -21,15 +21,12 @@ def transform(examples):
 
 def collate_fn(batch):
     # batch is list of dicts like {"image": tensor, "label": int, ...}
+    print(batch)
     images = torch.stack([b["image"] for b in batch], dim=0)
     labels = torch.tensor([b.get("label", -1) for b in batch], dtype=torch.long)
     return {"image": images, "label": labels}
 
 def main():
-    # Point this at your ImageNet train folder.
-    # Typical layouts:
-    #   /.../imagenet/train/n01440764/xxx.JPEG
-    # If your path already *is* the train folder, keep it as-is.
     train_dir = "/work/nvme/betw/msalunkhe/data/imagenet/"
 
     ds = load_dataset(
@@ -47,6 +44,7 @@ def main():
     ds = ds.shard(num_shards=world_size, index=rank)
 
     # Apply your torchvision transform on-the-fly
+    ds = ds.with_format("torch")  # ensure PIL objects come through
     ds.map(transform)
 
     data_loader_train = torch.utils.data.DataLoader(
@@ -55,7 +53,7 @@ def main():
         num_workers=4,          # for IterableDataset, workers can help, but tune it
         pin_memory=True,
         persistent_workers=True,
-        ##collate_fn=collate_fn,
+        collate_fn=collate_fn,
         drop_last=True,
     )
 
