@@ -32,6 +32,9 @@ def transform(examples,image_size=256):
         transforms.PILToTensor()
     ])
 
-    examples["image"] = [transform_train(
-        image.convert("RGB")) for image in examples["image"]]
+    images = examples["image"]
+    if isinstance(images, (list, tuple)):
+        examples["image"] = [transform_train(image.convert("RGB")) for image in images]
+    else:
+        examples["image"] = transform_train(images.convert("RGB"))
     return examples
