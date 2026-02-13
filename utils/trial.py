@@ -12,19 +12,22 @@ def transform(examples):
     return
 
 
-transform_train = transforms.Compose([
+def main():
+    transform_train = transforms.Compose([
     transforms.Lambda(lambda img: center_crop_arr(img, 256)),
     transforms.RandomHorizontalFlip(),
     transforms.PILToTensor()
 ])
-ds = load_dataset("/work/nvme/betw/msalunkhe/data/imagenet")['train']
-ds.set_transform(transform)
-sampler_train = torch.utils.data.DistributedSampler(
-    ds, num_replicas=1, rank=0, shuffle=True
-)
-print("Sampler_train =", sampler_train)
-data_loader_train = torch.utils.data.DataLoader(
-    ds, sampler=sampler_train,
-    drop_last=True
-)
-print(next(iter(data_loader_train)))
+    ds = load_dataset("/work/nvme/betw/msalunkhe/data/imagenet")['train']
+    ds.set_transform(transform)
+    sampler_train = torch.utils.data.DistributedSampler(
+        ds, num_replicas=1, rank=0, shuffle=True
+    )
+    print("Sampler_train =", sampler_train)
+    data_loader_train = torch.utils.data.DataLoader(
+        ds, sampler=sampler_train,
+        drop_last=True
+    )
+    print(next(iter(data_loader_train)))
+if __name__ == "__main__":
+    main()
