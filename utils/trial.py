@@ -9,6 +9,7 @@ os.environ['HF_HOME'] = "/work/nvme/betw/msalunkhe/data/huggingface"
 def transform(examples):
     examples["image"] = [transform_train(
         image.convert("RGB")) for image in examples["image"]]
+    return examples
 
 
 transform_train = transforms.Compose([
