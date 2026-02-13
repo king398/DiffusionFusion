@@ -34,7 +34,8 @@ class SmoothedValue(object):
         """
         if not is_dist_avail_and_initialized():
             return
-        t = torch.tensor([self.count, self.total], dtype=torch.float64, device='cuda')
+        t = torch.tensor([self.count, self.total],
+                         dtype=torch.float64, device='cuda')
         dist.barrier()
         dist.all_reduce(t)
         t = t.tolist()
@@ -109,7 +110,7 @@ class MetricLogger(object):
     def add_meter(self, name, meter):
         self.meters[name] = meter
 
-    def log_every(self, iterable, print_freq, header=None):
+    def log_every(self, iterable, print_freq, header=None, steps_per_epoch=None):
         i = 0
         if not header:
             header = ''
@@ -117,7 +118,7 @@ class MetricLogger(object):
         end = time.time()
         iter_time = SmoothedValue(fmt='{avg:.4f}')
         data_time = SmoothedValue(fmt='{avg:.4f}')
-        space_fmt = ':' + str(len(str(len(iterable)))) + 'd'
+        space_fmt = ':' + str(len(str(steps_per_epoch))) + 'd'
         log_msg = [
             header,
             '[{0' + space_fmt + '}/{1}]',
@@ -207,7 +208,8 @@ def init_distributed_mode(args):
         args.rank = int(os.environ['OMPI_COMM_WORLD_RANK'])
         args.world_size = int(os.environ['OMPI_COMM_WORLD_SIZE'])
         args.gpu = int(os.environ['OMPI_COMM_WORLD_LOCAL_RANK'])
-        args.dist_url = "tcp://%s:%s" % (os.environ['MASTER_ADDR'], os.environ['MASTER_PORT'])
+        args.dist_url = "tcp://%s:%s" % (
+            os.environ['MASTER_ADDR'], os.environ['MASTER_PORT'])
         os.environ['LOCAL_RANK'] = str(args.gpu)
         os.environ['RANK'] = str(args.rank)
         os.environ['WORLD_SIZE'] = str(args.world_size)
@@ -244,7 +246,8 @@ def add_weight_decay(model, weight_decay=0, skip_list=()):
         if not param.requires_grad:
             continue  # frozen weights
         if len(param.shape) == 1 or name.endswith(".bias") or name in skip_list or 'diffloss' in name:
-            no_decay.append(param)  # no weight decay on bias, norm and diffloss
+            # no weight decay on bias, norm and diffloss
+            no_decay.append(param)
         else:
             decay.append(param)
     return [

@@ -13,7 +13,7 @@ import torch_fidelity
 import copy
 
 
-def train_one_epoch(model, model_without_ddp, data_loader, optimizer, device, epoch, log_writer=None, args=None, steps_per_epoch:int=None):
+def train_one_epoch(model, model_without_ddp, data_loader, optimizer, device, epoch, log_writer=None, args=None, steps_per_epoch: int = None):
     model.train(True)
     metric_logger = misc.MetricLogger(delimiter="  ")
     metric_logger.add_meter('lr', misc.SmoothedValue(
@@ -26,7 +26,7 @@ def train_one_epoch(model, model_without_ddp, data_loader, optimizer, device, ep
     if log_writer is not None:
         print('log_dir: {}'.format(log_writer.log_dir))
 
-    for data_iter_step, batch in enumerate(metric_logger.log_every(data_loader, print_freq, header)):
+    for data_iter_step, batch in enumerate(metric_logger.log_every(data_loader, print_freq, header, steps_per_epoch)):
         # per iteration (instead of per epoch) lr scheduler
         lr_sched.adjust_learning_rate(
             optimizer, data_iter_step / steps_per_epoch + epoch, args)
