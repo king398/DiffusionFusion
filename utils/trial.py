@@ -48,7 +48,7 @@ def main():
 
     # Apply your torchvision transform on-the-fly
     ds = ds.with_format("python")  # ensure PIL objects come through
-    ds.set_transform(transform)
+    ds.map(transform)
 
     data_loader_train = torch.utils.data.DataLoader(
         ds,
