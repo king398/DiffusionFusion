@@ -235,6 +235,7 @@ def main(args):
     print(f"Start training for {args.epochs} epochs")
     start_time = time.time()
     steps_per_epoch = 1_200_000 // eff_batch_size
+    data_loader_train.__len__ = lambda: steps_per_epoch
     for epoch in range(args.start_epoch, args.epochs):
         
 
