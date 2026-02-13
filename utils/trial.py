@@ -21,7 +21,6 @@ def transform(examples):
 
 def collate_fn(batch):
     # batch is list of dicts like {"image": tensor, "label": int, ...}
-    print(batch)
     images = torch.stack([b["image"] for b in batch], dim=0)
     labels = torch.tensor([b.get("label", -1) for b in batch], dtype=torch.long)
     return {"image": images, "label": labels}

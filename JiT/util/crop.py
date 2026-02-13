@@ -25,14 +25,13 @@ def center_crop_arr(pil_image, image_size):
     return Image.fromarray(arr[crop_y: crop_y + image_size, crop_x: crop_x + image_size])
 
 
-def transform(examples):
+def transform(examples,image_size=256):
+    transform_train = transforms.Compose([
+        transforms.Lambda(lambda img: center_crop_arr(img, image_size)),
+        transforms.RandomHorizontalFlip(),
+        transforms.PILToTensor()
+    ])
+
     examples["image"] = [transform_train(
         image.convert("RGB")) for image in examples["image"]]
     return examples
-
-
-transform_train = transforms.Compose([
-    transforms.Lambda(lambda img: center_crop_arr(img, 256)),
-    transforms.RandomHorizontalFlip(),
-    transforms.PILToTensor()
-])
