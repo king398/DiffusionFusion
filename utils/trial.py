@@ -31,7 +31,7 @@ def main():
     ds = load_dataset(
         train_dir,
         split="train",
-        streaming=True,
+       ## streaming=True,
     )
 
     # Streaming: do sharding for DDP instead of DistributedSampler
