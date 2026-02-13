@@ -2,7 +2,7 @@ https://github.com/openai/guided-diffusion/tree/main/evaluations - Link to ADM e
 
 ![alt text](benchmark_results.png)
 
-
+https://huggingface.co/stabilityai/sdxl-vae - VAE to use for JiT VAE
 ## Metrics to keep in mind 
 
 ### FID (Fréchet Inception Distance)
@@ -16,3 +16,5 @@ IS evaluates image quality and diversity using a pretrained Inception classifier
 - Extract the autoencoder from DiT based models for usage
 - Design the architecture for a latent based JiT model, using the autoencoder from DiT. Run a short training on this model to make sure it can be used in combination with the JiT pixel based model.
 - Design the bridge between pixel based JiT and Latent Based JiT model. Probably using bi directional cross attention between the two models.
+
+
