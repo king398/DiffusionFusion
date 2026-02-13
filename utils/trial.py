@@ -47,7 +47,6 @@ def main():
     ds = ds.shard(num_shards=world_size, index=rank)
 
     # Apply your torchvision transform on-the-fly
-    ds = ds.with_format("python")  # ensure PIL objects come through
     ds.map(transform)
 
     data_loader_train = torch.utils.data.DataLoader(
@@ -56,7 +55,7 @@ def main():
         num_workers=4,          # for IterableDataset, workers can help, but tune it
         pin_memory=True,
         persistent_workers=True,
-        collate_fn=collate_fn,
+        ##collate_fn=collate_fn,
         drop_last=True,
     )
 
