@@ -147,7 +147,7 @@ def main(args):
     
 
     
-    dataset_train = load_dataset(args.data_path,split="train")
+    dataset_train = load_dataset(args.data_path,split="train",keep_in_memory=True)
     dataset_train = dataset_train.shuffle(seed=seed)
     dataset_train = dataset_train.shard(num_shards=num_tasks, index=global_rank)
     dataset_train = dataset_train.set_transform(transform)
