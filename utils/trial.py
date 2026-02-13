@@ -17,15 +17,14 @@ transform_train = transforms.Compose([
     transforms.RandomHorizontalFlip(),
     transforms.PILToTensor()
 ])
-ds = load_dataset("/work/nvme/betw/msalunkhe/data/imagenet",
-                  split="train")
+ds = load_dataset("/work/nvme/betw/msalunkhe/data/imagenet")['train']
 ds.set_transform(transform)
 sampler_train = torch.utils.data.DistributedSampler(
     ds, num_replicas=1, rank=0, shuffle=True
 )
 print("Sampler_train =", sampler_train)
 data_loader_train = torch.utils.data.DataLoader(
-        ds, sampler=sampler_train,
-        drop_last=True
-    )
+    ds, sampler=sampler_train,
+    drop_last=True
+)
 print(next(iter(data_loader_train)))
