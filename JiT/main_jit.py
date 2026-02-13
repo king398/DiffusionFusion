@@ -61,7 +61,7 @@ def get_args_parser():
     parser.add_argument('--seed', default=0, type=int)
     parser.add_argument('--start_epoch', default=0, type=int, metavar='N',
                         help='Starting epoch')
-    parser.add_argument('--num_workers', default=32, type=int)
+    parser.add_argument('--num_workers', default=64, type=int)
     parser.add_argument('--pin_mem', action='store_true',
                         help='Pin CPU memory in DataLoader for faster GPU transfers')
     parser.add_argument('--no_pin_mem', action='store_false', dest='pin_mem')
@@ -147,11 +147,12 @@ def main(args):
     
 
     
-    dataset_train = load_dataset(args.data_path,split="train",keep_in_memory=True)
-    dataset_train = dataset_train.shuffle(seed=seed)
+    dataset_train = load_dataset(args.data_path,split="train",streaming=True)
+    dataset_train = dataset_train.shuffle(buffer_size=50_000, seed=0)
     dataset_train = dataset_train.shard(num_shards=num_tasks, index=global_rank)
-    dataset_train = dataset_train.set_transform(transform)
+    dataset_train = dataset_train.map(transform,fn_kwargs={"image_size": args.img_size})
     dataset_train = dataset_train.with_format("torch")
+    assert isinstance(dataset_train, torch.utils.data.IterableDataset)
 
 
 
@@ -161,7 +162,8 @@ def main(args):
         num_workers=args.num_workers,
         pin_memory=args.pin_mem,
         drop_last=True,
-        collate_fn=collate_fn
+        collate_fn=collate_fn,
+        prefetch_factor=2,
     )
 
     torch._dynamo.config.cache_size_limit = 128
