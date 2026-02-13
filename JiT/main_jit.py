@@ -152,7 +152,6 @@ def main(args):
     dataset_train = dataset_train.shard(num_shards=num_tasks, index=global_rank)
     dataset_train = dataset_train.set_transform(transform)
     dataset_train = dataset_train.with_format("torch")
-    assert isinstance(dataset_train, torch.utils.data.IterableDataset)
 
 
 
