@@ -153,16 +153,11 @@ def main(args):
     dataset_train = dataset_train.with_format("torch")
     assert isinstance(dataset_train, torch.utils.data.IterableDataset)
 
-    dataset_train.map(transform,fn_kwargs={"image_size": args.img_size})
+    dataset = dataset_train.map(transform,fn_kwargs={"image_size": args.img_size})
     
 
-    sampler_train = torch.utils.data.DistributedSampler(
-        dataset_train, num_replicas=num_tasks, rank=global_rank, shuffle=True
-    )
-    print("Sampler_train =", sampler_train)
-
     data_loader_train = torch.utils.data.DataLoader(
-        dataset_train, sampler=sampler_train,
+        dataset_train,
         batch_size=args.batch_size,
         num_workers=args.num_workers,
         pin_memory=args.pin_mem,
