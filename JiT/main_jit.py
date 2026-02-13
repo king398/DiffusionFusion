@@ -150,10 +150,11 @@ def main(args):
     dataset_train = load_dataset(args.data_path,split="train",streaming=True)
     dataset_train = dataset_train.shuffle(buffer_size=50_000, seed=0)
     dataset_train = dataset_train.shard(num_shards=num_tasks, index=global_rank)
+    dataset_train = dataset_train.map(transform,fn_kwargs={"image_size": args.img_size})
     dataset_train = dataset_train.with_format("torch")
     assert isinstance(dataset_train, torch.utils.data.IterableDataset)
 
-    dataset = dataset_train.map(transform,fn_kwargs={"image_size": args.img_size})
+    
     
 
     data_loader_train = torch.utils.data.DataLoader(
