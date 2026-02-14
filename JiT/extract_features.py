@@ -109,6 +109,13 @@ def center_crop_arr(pil_image, image_size):
 #################################################################################
 #                                  Training Loop                                #
 #################################################################################
+def collate_fn(batch):
+    # batch is list of dicts like {"image": tensor, "label": int, ...}
+    images = torch.stack([b["image"] for b in batch], dim=0)
+    labels = torch.tensor([b.get("label", -1)
+                          for b in batch], dtype=torch.long)
+    return {"image": images, "label": labels}
+
 
 def main(args):
     """
@@ -170,7 +177,8 @@ def main(args):
         sampler=sampler,
         num_workers=args.num_workers,
         pin_memory=True,
-        drop_last=False
+        drop_last=False,
+        collate_fn=collate_fn
     )
 
     NUM_SAMPLES = len(sampler)
