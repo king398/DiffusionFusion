@@ -62,6 +62,12 @@ def get_args_parser():
     parser.add_argument('--start_epoch', default=0, type=int, metavar='N',
                         help='Starting epoch')
     parser.add_argument('--num_workers', default=64, type=int)
+    parser.add_argument('--prefetch_factor', default=4, type=int,
+                        help='Number of batches each worker preloads')
+    parser.add_argument('--persistent_workers', action='store_true',
+                        help='Keep DataLoader workers alive across epochs')
+    parser.add_argument('--no_persistent_workers', action='store_false', dest='persistent_workers')
+    parser.set_defaults(persistent_workers=True)
     parser.add_argument('--pin_mem', action='store_true',
                         help='Pin CPU memory in DataLoader for faster GPU transfers')
     parser.add_argument('--no_pin_mem', action='store_false', dest='pin_mem')
@@ -147,25 +153,31 @@ def main(args):
     
 
     
-    dataset_train = load_dataset(args.data_path,split="train")
-    
-    ##dataset_train = dataset_train.shuffle(buffer_size=50_000, seed=0)
-    ##dataset_train = dataset_train.shard(num_shards=num_tasks, index=global_rank)
-    
+    dataset_train = load_dataset(args.data_path, split="train")
     dataset_train = dataset_train.with_format("torch")
     dataset_train = dataset_train.with_transform(transform)
-    ##assert isinstance(dataset_train, torch.utils.data.IterableDataset)
 
-
-
-    data_loader_train = torch.utils.data.DataLoader(
+    sampler_train = torch.utils.data.DistributedSampler(
         dataset_train,
+        num_replicas=num_tasks,
+        rank=global_rank,
+        shuffle=True,
+        drop_last=True,
+    )
+
+    loader_kwargs = dict(
+        dataset=dataset_train,
         batch_size=args.batch_size,
+        sampler=sampler_train,
         num_workers=args.num_workers,
         pin_memory=args.pin_mem,
         drop_last=True,
         collate_fn=collate_fn,
     )
+    if args.num_workers > 0:
+        loader_kwargs["prefetch_factor"] = args.prefetch_factor
+        loader_kwargs["persistent_workers"] = args.persistent_workers
+    data_loader_train = torch.utils.data.DataLoader(**loader_kwargs)
 
     torch._dynamo.config.cache_size_limit = 128
     torch._dynamo.config.optimize_ddp = False
@@ -236,10 +248,9 @@ def main(args):
     # Training loop
     print(f"Start training for {args.epochs} epochs")
     start_time = time.time()
-    steps_per_epoch = 1_200_000 // eff_batch_size
-    data_loader_train.__len__ = lambda: steps_per_epoch
+    steps_per_epoch = len(data_loader_train)
     for epoch in range(args.start_epoch, args.epochs):
-        
+        sampler_train.set_epoch(epoch)
 
         train_one_epoch(model, model_without_ddp, data_loader_train,
                         optimizer, device, epoch, log_writer=log_writer, args=args, steps_per_epoch=steps_per_epoch)
