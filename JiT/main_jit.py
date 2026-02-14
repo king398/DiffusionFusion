@@ -165,7 +165,6 @@ def main(args):
         pin_memory=args.pin_mem,
         drop_last=True,
         collate_fn=collate_fn,
-        prefetch_factor=4,
     )
 
     torch._dynamo.config.cache_size_limit = 128
