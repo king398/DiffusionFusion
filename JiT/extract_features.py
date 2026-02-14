@@ -184,7 +184,10 @@ def main(args):
     NUM_SAMPLES = len(sampler)
 
     train_steps = 0
-    for x, y in tqdm(loader, total=len(loader), desc=f"Rank {rank}"):
+    for batch in tqdm(loader, total=len(loader), desc=f"Rank {rank}"):
+        x = batch["image"]
+        y = batch["label"]
+
         x = x.to(device)
         y = y.to(device)
         with torch.no_grad():
