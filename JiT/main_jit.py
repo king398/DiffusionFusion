@@ -148,6 +148,7 @@ def main(args):
 
     
     dataset_train = load_dataset(args.data_path,split="train",streaming=True)
+    
     dataset_train = dataset_train.shuffle(buffer_size=50_000, seed=0)
     dataset_train = dataset_train.shard(num_shards=num_tasks, index=global_rank)
     dataset_train = dataset_train.map(transform,fn_kwargs={"image_size": args.img_size},batched=True)
@@ -164,6 +165,7 @@ def main(args):
         drop_last=True,
         collate_fn=collate_fn,
         prefetch_factor=8,
+        persistent_workers=True,
     )
 
     torch._dynamo.config.cache_size_limit = 128
