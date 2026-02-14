@@ -151,8 +151,9 @@ def main(args):
     
     ##dataset_train = dataset_train.shuffle(buffer_size=50_000, seed=0)
     ##dataset_train = dataset_train.shard(num_shards=num_tasks, index=global_rank)
-    dataset_train.set_transform(transform)
+    
     dataset_train = dataset_train.with_format("torch")
+    dataset_train = dataset_train.with_transform(transform)
     ##assert isinstance(dataset_train, torch.utils.data.IterableDataset)
 
 
