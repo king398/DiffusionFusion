@@ -34,10 +34,10 @@ transform_train = transforms.Compose([
 
 def transform(examples, image_size=256):
 
-    images = examples["jpg"]
+    images = examples["image"]
     if isinstance(images, (list, tuple)):
-        examples["jpg"] = [transform_train(
+        examples["image"] = [transform_train(
             image.convert("RGB")) for image in images]
     else:
-        examples["jpg"] = transform_train(images.convert("RGB"))
+        examples["image"] = transform_train(images.convert("RGB"))
     return examples
