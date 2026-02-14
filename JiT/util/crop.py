@@ -34,7 +34,7 @@ transform_train = transforms.Compose([
 
 def transform(examples, image_size=256):
 
-    images = examples["image"]
+    images = examples["jpg"]
     if isinstance(images, (list, tuple)):
         examples["jpg"] = [transform_train(
             image.convert("RGB")) for image in images]

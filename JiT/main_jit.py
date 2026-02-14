@@ -116,7 +116,7 @@ def get_args_parser():
 def collate_fn(batch):
     # batch is list of dicts like {"image": tensor, "label": int, ...}
     images = torch.stack([b["image"] for b in batch], dim=0)
-    labels = torch.tensor([b.get("label", -1) for b in batch], dtype=torch.long)
+    labels = torch.tensor([b.get("cls", -1) for b in batch], dtype=torch.long)
     return {"image": images, "label": labels}
 
 def main(args):
