@@ -61,3 +61,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+ds = load_dataset("timm/imagenet-1k-wds")
