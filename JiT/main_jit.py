@@ -147,13 +147,13 @@ def main(args):
     
 
     
-    dataset_train = load_dataset(args.data_path,split="train",streaming=True)
+    dataset_train = load_dataset(args.data_path,split="validation")
     
-    dataset_train = dataset_train.shuffle(buffer_size=50_000, seed=0)
-    dataset_train = dataset_train.shard(num_shards=num_tasks, index=global_rank)
-    dataset_train = dataset_train.map(transform,fn_kwargs={"image_size": args.img_size},batched=True)
+    ##dataset_train = dataset_train.shuffle(buffer_size=50_000, seed=0)
+    ##dataset_train = dataset_train.shard(num_shards=num_tasks, index=global_rank)
+    dataset_train = dataset_train.set_transform(transform)
     dataset_train = dataset_train.with_format("torch")
-    assert isinstance(dataset_train, torch.utils.data.IterableDataset)
+    ##assert isinstance(dataset_train, torch.utils.data.IterableDataset)
 
 
 
@@ -164,8 +164,7 @@ def main(args):
         pin_memory=args.pin_mem,
         drop_last=True,
         collate_fn=collate_fn,
-        ##prefetch_factor=8,
-        ##persistent_workers=True,
+        prefetch_factor=4,
     )
 
     torch._dynamo.config.cache_size_limit = 128
