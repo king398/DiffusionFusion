@@ -13,12 +13,14 @@ import torchvision.datasets as datasets
 
 from util.crop import center_crop_arr, transform
 import util.misc as misc
-
+from util.dataset import CustomDataset
 import copy
 from engine_jit import train_one_epoch, evaluate
 
 from denoiser import Denoiser
 from datasets import load_dataset
+
+from diffusers.models import AutoencoderKL
 
 def get_args_parser():
     parser = argparse.ArgumentParser('JiT', add_help=False)
@@ -31,6 +33,7 @@ def get_args_parser():
                         default=0.0, help='Attention dropout rate')
     parser.add_argument('--proj_dropout', type=float,
                         default=0.0, help='Projection dropout rate')
+    parser.add_argument('--vae_pretrained_path', type=str, default='stabilityai/sdxl-vae')
 
     # training
     parser.add_argument('--epochs', default=200, type=int)
@@ -66,7 +69,8 @@ def get_args_parser():
                         help='Number of batches each worker preloads')
     parser.add_argument('--persistent_workers', action='store_true',
                         help='Keep DataLoader workers alive across epochs')
-    parser.add_argument('--no_persistent_workers', action='store_false', dest='persistent_workers')
+    parser.add_argument('--no_persistent_workers',
+                        action='store_false', dest='persistent_workers')
     parser.set_defaults(persistent_workers=True)
     parser.add_argument('--pin_mem', action='store_true',
                         help='Pin CPU memory in DataLoader for faster GPU transfers')
@@ -76,15 +80,18 @@ def get_args_parser():
                         help='DDP gradient bucket size in MB')
     parser.add_argument('--ddp_broadcast_buffers', action='store_true',
                         help='Broadcast model buffers from rank 0 each forward')
-    parser.add_argument('--no_ddp_broadcast_buffers', action='store_false', dest='ddp_broadcast_buffers')
+    parser.add_argument('--no_ddp_broadcast_buffers',
+                        action='store_false', dest='ddp_broadcast_buffers')
     parser.set_defaults(ddp_broadcast_buffers=False)
     parser.add_argument('--ddp_gradient_as_bucket_view', action='store_true',
                         help='Use DDP bucket views to reduce gradient memory copies')
-    parser.add_argument('--no_ddp_gradient_as_bucket_view', action='store_false', dest='ddp_gradient_as_bucket_view')
+    parser.add_argument('--no_ddp_gradient_as_bucket_view',
+                        action='store_false', dest='ddp_gradient_as_bucket_view')
     parser.set_defaults(ddp_gradient_as_bucket_view=True)
     parser.add_argument('--ddp_static_graph', action='store_true',
                         help='Enable DDP static graph optimizations')
-    parser.add_argument('--no_ddp_static_graph', action='store_false', dest='ddp_static_graph')
+    parser.add_argument('--no_ddp_static_graph',
+                        action='store_false', dest='ddp_static_graph')
     parser.set_defaults(ddp_static_graph=True)
 
     # sampling
@@ -133,11 +140,14 @@ def get_args_parser():
 
     return parser
 
+
 def collate_fn(batch):
     # batch is list of dicts like {"image": tensor, "label": int, ...}
     images = torch.stack([b["image"] for b in batch], dim=0)
-    labels = torch.tensor([b.get("label", -1) for b in batch], dtype=torch.long)
+    labels = torch.tensor([b.get("label", -1)
+                          for b in batch], dtype=torch.long)
     return {"image": images, "label": labels}
+
 
 def main(args):
     misc.init_distributed_mode(args)
@@ -164,12 +174,9 @@ def main(args):
         log_writer = None
 
     # Data augmentation transforms
-    
 
-    
-    dataset_train = load_dataset(args.data_path, split="train")
-    dataset_train = dataset_train.with_format("torch")
-    dataset_train = dataset_train.with_transform(transform)
+    dataset_train = CustomDataset(features_dir=os.path.join(
+        args.data_path, 'imagenet256_features'), labels_dir=os.path.join(args.data_path, 'imagenet256_labels'))
 
     sampler_train = torch.utils.data.DistributedSampler(
         dataset_train,
@@ -204,7 +211,7 @@ def main(args):
     print("Number of trainable parameters: {:.6f}M".format(n_params / 1e6))
 
     model.to(device)
-
+    vae = AutoencoderKL.from_pretrained(args.vae_pretrained_path).to(device)
     eff_batch_size = args.batch_size * misc.get_world_size()
     if args.lr is None:  # only base_lr (blr) is specified
         args.lr = args.blr * eff_batch_size / 256
@@ -234,7 +241,11 @@ def main(args):
     checkpoint_path = os.path.join(
         args.resume, "checkpoint-last.pth") if args.resume else None
     if checkpoint_path and os.path.exists(checkpoint_path):
-        checkpoint = torch.load(checkpoint_path, map_location='cpu')
+        if hasattr(torch.serialization, "safe_globals"):
+            with torch.serialization.safe_globals([argparse.Namespace]):
+                checkpoint = torch.load(checkpoint_path, map_location='cpu')
+        else:
+            checkpoint = torch.load(checkpoint_path, map_location='cpu')
         model_without_ddp.load_state_dict(checkpoint['model'])
 
         ema_state_dict1 = checkpoint['model_ema1']
@@ -264,7 +275,7 @@ def main(args):
             torch.manual_seed(seed)
             with torch.no_grad():
                 evaluate(model_without_ddp, args, 0,
-                         batch_size=args.gen_bsz, log_writer=log_writer)
+                         batch_size=args.gen_bsz, log_writer=log_writer,vae=vae)
         return
 
     # Training loop

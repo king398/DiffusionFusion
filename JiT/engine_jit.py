@@ -32,9 +32,9 @@ def train_one_epoch(model, model_without_ddp, data_loader, optimizer, device, ep
             optimizer, data_iter_step / steps_per_epoch + epoch, args)
 
         # normalize image to [-1, 1]
-        x = batch["image"].to(device, non_blocking=True).to(torch.float32).div_(255)
-        labels = batch["label"]
-        x = x * 2.0 - 1.0
+        x = batch["x"].to(device, non_blocking=True)
+        x = x * 0.13025
+        labels = batch["y"]
         labels = labels.to(device, non_blocking=True)
 
         with torch.amp.autocast('cuda', dtype=torch.bfloat16):
@@ -48,7 +48,6 @@ def train_one_epoch(model, model_without_ddp, data_loader, optimizer, device, ep
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
-
 
         model_without_ddp.update_ema()
 
@@ -68,7 +67,7 @@ def train_one_epoch(model, model_without_ddp, data_loader, optimizer, device, ep
                 log_writer.add_scalar('lr', lr, epoch_1000x)
 
 
-def evaluate(model_without_ddp, args, epoch, batch_size=64, log_writer=None):
+def evaluate(model_without_ddp, args, epoch, vae, batch_size=64, log_writer=None):
 
     model_without_ddp.eval()
     world_size = misc.get_world_size()
@@ -117,21 +116,14 @@ def evaluate(model_without_ddp, args, epoch, batch_size=64, log_writer=None):
         torch.distributed.barrier()
 
         # denormalize images
-        sampled_images = (sampled_images + 1) / 2
-        sampled_images = sampled_images.detach().cpu()
-
-        # distributed save images
-        for b_id in range(sampled_images.size(0)):
-            img_id = i * \
-                sampled_images.size(0) * world_size + \
-                local_rank * sampled_images.size(0) + b_id
-            if img_id >= args.num_images:
-                break
-            gen_img = np.round(
-                np.clip(sampled_images[b_id].numpy().transpose([1, 2, 0]) * 255, 0, 255))
-            gen_img = gen_img.astype(np.uint8)[:, :, ::-1]
+        sampled_images = vae.decode(sampled_images / 0.13025).sample
+        sampled_images = torch.clamp(127.5 * sampled_images + 128.0, 0, 255).permute(
+            0, 2, 3, 1).to("cpu", dtype=torch.uint8).numpy()
+        for i, sample in enumerate(sampled_images):
+            index = i + world_size * batch_size * \
+                (num_steps-1) + local_rank * batch_size
             cv2.imwrite(os.path.join(save_folder, '{}.png'.format(
-                str(img_id).zfill(5))), gen_img)
+                str(index).zfill(5))), sample)
 
     torch.distributed.barrier()
 

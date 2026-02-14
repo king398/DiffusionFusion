@@ -139,7 +139,7 @@ class Attention(nn.Module):
         q = rope(q)
         k = rope(k)
         x = torch.nn.functional.scaled_dot_product_attention(
-            q,k,v,dropout_p=self.attn_drop.p if self.training else 0.
+            q, k, v, dropout_p=self.attn_drop.p if self.training else 0.
         )
 
         x = x.transpose(1, 2).reshape(B, N, C)
@@ -389,6 +389,11 @@ class JiT(nn.Module):
 def JiT_B_16(**kwargs):
     return JiT(depth=12, hidden_size=768, num_heads=12,
                bottleneck_dim=128, in_context_len=32, in_context_start=4, patch_size=16, **kwargs)
+
+
+def JiT_B_2_4C(**kwargs):
+    return JiT(depth=12, hidden_size=768, num_heads=12,
+               bottleneck_dim=128, in_context_len=32, in_context_start=4, patch_size=2, in_channels=4, **kwargs)
 
 
 def JiT_B_32(**kwargs):
