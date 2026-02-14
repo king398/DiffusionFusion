@@ -14,7 +14,7 @@ transform_train = transforms.Compose([
 
 def transform(examples):
     # examples is a dict of lists in batched mode
-    examples["image"] = [
+    examples["  "] = [
         transform_train(img.convert("RGB")) for img in examples["image"]
     ]
     return examples

@@ -49,7 +49,6 @@ def train_one_epoch(model, model_without_ddp, data_loader, optimizer, device, ep
         loss.backward()
         optimizer.step()
 
-        torch.cuda.synchronize()
 
         model_without_ddp.update_ema()
 
