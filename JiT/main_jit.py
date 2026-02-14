@@ -147,7 +147,7 @@ def main(args):
     
 
     
-    dataset_train = load_dataset(args.data_path,split="validation")
+    dataset_train = load_dataset(args.data_path,split="train")
     
     ##dataset_train = dataset_train.shuffle(buffer_size=50_000, seed=0)
     ##dataset_train = dataset_train.shard(num_shards=num_tasks, index=global_rank)
