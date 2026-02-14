@@ -165,7 +165,7 @@ def main(args):
         drop_last=True,
         collate_fn=collate_fn,
         ##prefetch_factor=8,
-        persistent_workers=True,
+        ##persistent_workers=True,
     )
 
     torch._dynamo.config.cache_size_limit = 128
