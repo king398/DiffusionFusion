@@ -72,6 +72,20 @@ def get_args_parser():
                         help='Pin CPU memory in DataLoader for faster GPU transfers')
     parser.add_argument('--no_pin_mem', action='store_false', dest='pin_mem')
     parser.set_defaults(pin_mem=True)
+    parser.add_argument('--ddp_bucket_cap_mb', default=100, type=int,
+                        help='DDP gradient bucket size in MB')
+    parser.add_argument('--ddp_broadcast_buffers', action='store_true',
+                        help='Broadcast model buffers from rank 0 each forward')
+    parser.add_argument('--no_ddp_broadcast_buffers', action='store_false', dest='ddp_broadcast_buffers')
+    parser.set_defaults(ddp_broadcast_buffers=False)
+    parser.add_argument('--ddp_gradient_as_bucket_view', action='store_true',
+                        help='Use DDP bucket views to reduce gradient memory copies')
+    parser.add_argument('--no_ddp_gradient_as_bucket_view', action='store_false', dest='ddp_gradient_as_bucket_view')
+    parser.set_defaults(ddp_gradient_as_bucket_view=True)
+    parser.add_argument('--ddp_static_graph', action='store_true',
+                        help='Enable DDP static graph optimizations')
+    parser.add_argument('--no_ddp_static_graph', action='store_false', dest='ddp_static_graph')
+    parser.set_defaults(ddp_static_graph=True)
 
     # sampling
     parser.add_argument('--sampling_method', default='heun', type=str,
@@ -200,7 +214,15 @@ def main(args):
     print("Effective batch size: %d" % eff_batch_size)
 
     model = torch.nn.parallel.DistributedDataParallel(
-        model, device_ids=[args.gpu])
+        model,
+        device_ids=[args.gpu],
+        output_device=args.gpu,
+        find_unused_parameters=False,
+        bucket_cap_mb=args.ddp_bucket_cap_mb,
+        broadcast_buffers=args.ddp_broadcast_buffers,
+        gradient_as_bucket_view=args.ddp_gradient_as_bucket_view,
+        static_graph=args.ddp_static_graph,
+    )
     model_without_ddp = model.module
 
     # Set up optimizer with weight decay adjustment for bias and norm layers
