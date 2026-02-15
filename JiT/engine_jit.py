@@ -37,9 +37,7 @@ def train_one_epoch(model, model_without_ddp, data_loader, optimizer, device, ep
 
         # normalize image to [-1, 1]
         x = batch["x"].to(device, non_blocking=True)
-        x = x * 0.13025
-        labels = batch["y"]
-        labels = labels.to(device, non_blocking=True).view(-1).long()
+        labels = batch["y"].to(device, non_blocking=True).view(-1).long()
         with torch.amp.autocast('cuda', dtype=torch.bfloat16):
             loss = model(x, labels)
 
@@ -136,7 +134,7 @@ def evaluate(model_without_ddp, args, epoch, vae, batch_size=64, log_writer=None
 
         torch.distributed.barrier()
 
-        # denormalize images
+        print("Decoding step {}/{}".format(step_idx, num_steps))
         sampled_images = vae.decode(sampled_images / 0.13025).sample
         sampled_images = torch.clamp(127.5 * sampled_images + 128.0, 0, 255).permute(
             0, 2, 3, 1).to("cpu", dtype=torch.uint8).numpy()
@@ -169,7 +167,7 @@ def evaluate(model_without_ddp, args, epoch, vae, batch_size=64, log_writer=None
         elif args.img_size == 512:
             fid_statistics_file = 'fid_stats/jit_in512_stats.npz'
         else:
-            raise NotImplementedError
+            fid_statistics_file = 'fid_stats/jit_in256_stats.npz'
         metrics_dict = torch_fidelity.calculate_metrics(
             input1=save_folder,
             input2=None,

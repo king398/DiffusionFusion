@@ -181,7 +181,8 @@ def main(args):
         num_workers=args.num_workers,
         pin_memory=True,
         drop_last=False,
-        collate_fn=collate_fn
+        collate_fn=collate_fn,
+        prefetch_factor=4,
     )
 
     NUM_SAMPLES = len(sampler)
@@ -195,7 +196,7 @@ def main(args):
         y = y.to(device)
         with torch.no_grad():
             # Map input images to latent space + normalize latents:
-            x = vae.encode(x).latent_dist.sample().mul_(0.18215)
+            x = vae.encode(x).latent_dist.sample().mul_(vae.config.scaling_factor)
 
         x = x.detach().cpu().numpy()    # (bs, 4, 32, 32)
         y = y.detach().cpu().numpy()    # (bs,)
