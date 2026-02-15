@@ -174,7 +174,7 @@ def evaluate(model_without_ddp, args, epoch, vae, batch_size=64, log_writer=None
             fid_statistics_file=fid_statistics_file,
             cuda=True,
             isc=True,
-            fid=True,
+            fid=False,
             kid=False,
             prc=False,
             verbose=False,

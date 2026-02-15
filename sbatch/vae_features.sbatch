@@ -21,7 +21,9 @@ source /u/msalunkhe/.venv/bin/activate
 cd /u/msalunkhe/DiffusionFusion/JiT
 IMAGENET_PATH="timm/mini-imagenet"
 OUTPUT_DIR="/work/nvme/betw/msalunkhe/data/"
-OMP_NUM_THREADS=32 torchrun --nproc_per_node=auto --nnodes=1 --node_rank=0 \
+# Avoid thread explosion across DDP ranks + DataLoader workers.
+torchrun --nproc_per_node=auto --nnodes=1 --node_rank=0 \
 extract_features.py \
 --data-path ${IMAGENET_PATH}  \
---features-path ${OUTPUT_DIR}
+--features-path ${OUTPUT_DIR} \
+--num-workers 2

@@ -148,3 +148,9 @@ ORCD Seed Fund Grants for supporting GPU resources.
 ### Contact
 
 If you have any questions, feel free to contact me through email (tianhong@mit.edu). Enjoy!
+  python - <<'PY'
+  import inspect
+  from torch_fidelity import metrics
+  print("module:", metrics.__file__)
+  print("has fid_statistics_file:", "fid_statistics_file" in inspect.getsource(metrics.calculate_metrics))
+  PY
