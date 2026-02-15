@@ -47,7 +47,7 @@ def main():
                         help='Resolution to center-crop and resize')
     parser.add_argument('--batch_size', type=int, default=256,
                         help='Batch size used while exporting PNG files')
-    parser.add_argument('--num_workers', type=int, default=32,
+    parser.add_argument('--num_workers', type=int, default=4,
                         help='Number of dataloader workers')
     parser.add_argument('--use_hf_dataset', action='store_true',
                         help='Load data via datasets.load_dataset instead of torchvision ImageFolder')

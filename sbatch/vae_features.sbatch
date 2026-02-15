@@ -27,3 +27,13 @@ extract_features.py \
 --data-path ${IMAGENET_PATH}  \
 --features-path ${OUTPUT_DIR} \
 --num-workers 2
+  IMAGENET_PATH="timm/mini-imagenet"
+  OUTPUT_DIR="/work/nvme/betw/msalunkhe/data"
+
+  python prepare_ref.py \
+    --use_hf_dataset \
+    --data_path "$IMAGENET_PATH" \
+    --hf_split train \
+    --hf_image_column image \
+    --img_size 256 \
+    --output_path "${OUTPUT_DIR}/mini-imagenet-train-256"
