@@ -174,10 +174,10 @@ def evaluate(model_without_ddp, args, epoch, vae, batch_size=64, log_writer=None
             fid_statistics_file=fid_statistics_file,
             cuda=True,
             isc=True,
-            fid=False,
-            kid=False,
-            prc=False,
-            verbose=False,
+            fid=True,
+            kid=True,
+            prc=True,
+            verbose=True,
         )
         fid = metrics_dict['frechet_inception_distance']
         inception_score = metrics_dict['inception_score_mean']
