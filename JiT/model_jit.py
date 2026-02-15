@@ -428,6 +428,7 @@ JiT_models = {
     'JiT-L/32': JiT_L_32,
     'JiT-H/16': JiT_H_16,
     'JiT-H/32': JiT_H_32,
+    'JiT-B/2-4C': JiT_B_2_4C
 }
 if __name__ == "__main__":
     module = BottleneckPatchEmbed(img_size=32, in_chans=4, patch_size=2)

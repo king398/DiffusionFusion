@@ -10,10 +10,7 @@ import torch.backends.cudnn as cudnn
 from torch.utils.tensorboard import SummaryWriter
 import torchvision.transforms as transforms
 import torchvision.datasets as datasets
-try:
-    import wandb
-except ImportError:
-    wandb = None
+import wandb
 
 from util.crop import center_crop_arr, transform
 import util.misc as misc
@@ -227,7 +224,6 @@ def main(args):
         num_workers=args.num_workers,
         pin_memory=args.pin_mem,
         drop_last=True,
-        collate_fn=collate_fn,
     )
     if args.num_workers > 0:
         loader_kwargs["prefetch_factor"] = args.prefetch_factor
