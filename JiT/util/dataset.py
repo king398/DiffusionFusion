@@ -23,4 +23,4 @@ class CustomDataset(Dataset):
 
         features = np.load(os.path.join(self.features_dir, feature_file))
         labels = np.load(os.path.join(self.labels_dir, label_file))
-        return {"x": torch.from_numpy(features), "y": torch.from_numpy(labels).long()}
+        return {"x": torch.from_numpy(features).squeeze(0), "y": torch.from_numpy(labels).long()}
