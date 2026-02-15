@@ -392,7 +392,7 @@ def JiT_B_16(**kwargs):
 
 
 def JiT_B_2_4C(**kwargs):
-    return JiT(depth=12, hidden_size=768, num_heads=12,
+    return JiT(input_size=32, depth=12, hidden_size=768, num_heads=12,
                bottleneck_dim=128, in_context_len=32, in_context_start=4, patch_size=2,  **kwargs)
 
 
@@ -431,8 +431,9 @@ JiT_models = {
     'JiT-B/2-4C': JiT_B_2_4C
 }
 if __name__ == "__main__":
-    module = BottleneckPatchEmbed(img_size=32, in_chans=4, patch_size=2)
-    random_tensor = torch.randn(1, 4, 32, 32)  # (B, C, H, W)
-    output = module(random_tensor)
+    module = JiT_B_2_4C(in_channels=4).cuda()
+    random_tensor = torch.randn(1, 4, 32, 32).cuda()  # (B, C, H, W)
+    random_t = torch.tensor([0.5]).cuda()  # (B,)
+    random_y = torch.tensor([10]).cuda()  # (B,)
+    output = module(random_tensor, random_t, random_y)
     print(output.shape)
-    print(module.num_patches)
