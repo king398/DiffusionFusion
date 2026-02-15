@@ -10,6 +10,10 @@ import torch.backends.cudnn as cudnn
 from torch.utils.tensorboard import SummaryWriter
 import torchvision.transforms as transforms
 import torchvision.datasets as datasets
+try:
+    import wandb
+except ImportError:
+    wandb = None
 
 from util.crop import center_crop_arr, transform
 import util.misc as misc
@@ -127,6 +131,22 @@ def get_args_parser():
     parser.add_argument('--save_last_freq', type=int, default=5,
                         help='Frequency (in epochs) to save checkpoints')
     parser.add_argument('--log_freq', default=100, type=int)
+    parser.add_argument('--use_wandb', action='store_true',
+                        help='Enable Weights & Biases logging')
+    parser.add_argument('--no_use_wandb', action='store_false', dest='use_wandb',
+                        help='Disable Weights & Biases logging')
+    parser.set_defaults(use_wandb=True)
+    parser.add_argument('--wandb_project', type=str, default='jit',
+                        help='Weights & Biases project name')
+    parser.add_argument('--wandb_entity', type=str, default=None,
+                        help='Weights & Biases entity/team name')
+    parser.add_argument('--wandb_run_name', type=str, default=None,
+                        help='Optional Weights & Biases run name')
+    parser.add_argument('--wandb_mode', type=str, default='online',
+                        choices=['online', 'offline', 'disabled'],
+                        help='Weights & Biases mode')
+    parser.add_argument('--wandb_eval_image_interval', type=int, default=10,
+                        help='Log one generated eval image to W&B every N images')
     parser.add_argument('--device', default='cuda',
                         help='Device to use for training/testing')
 
@@ -172,6 +192,20 @@ def main(args):
         log_writer = SummaryWriter(log_dir=args.output_dir)
     else:
         log_writer = None
+    wandb_run = None
+    if global_rank == 0 and args.use_wandb:
+        if wandb is None:
+            raise ImportError(
+                "wandb is not installed. Install it with `pip install wandb` or disable --use_wandb."
+            )
+        wandb_run = wandb.init(
+            project=args.wandb_project,
+            entity=args.wandb_entity,
+            name=args.wandb_run_name,
+            config=vars(args),
+            dir=args.output_dir if args.output_dir else None,
+            mode=args.wandb_mode,
+        )
 
     # Data augmentation transforms
 
@@ -268,58 +302,94 @@ def main(args):
             list(model_without_ddp.parameters()))
         print("Training from scratch")
 
-    # Evaluate generation
-    if args.evaluate_gen:
-        print("Evaluating checkpoint at {} epoch".format(args.start_epoch))
-        with torch.random.fork_rng():
-            torch.manual_seed(seed)
-            with torch.no_grad():
-                evaluate(model_without_ddp, args, 0,
-                         batch_size=args.gen_bsz, log_writer=log_writer,vae=vae)
-        return
+    try:
+        # Evaluate generation
+        if args.evaluate_gen:
+            print("Evaluating checkpoint at {} epoch".format(args.start_epoch))
+            with torch.random.fork_rng():
+                torch.manual_seed(seed)
+                with torch.no_grad():
+                    evaluate(
+                        model_without_ddp,
+                        args,
+                        0,
+                        batch_size=args.gen_bsz,
+                        log_writer=log_writer,
+                        vae=vae,
+                        wandb_run=wandb_run,
+                    )
+            return
 
-    # Training loop
-    print(f"Start training for {args.epochs} epochs")
-    start_time = time.time()
-    steps_per_epoch = len(data_loader_train)
-    for epoch in range(args.start_epoch, args.epochs):
-        sampler_train.set_epoch(epoch)
+        # Training loop
+        print(f"Start training for {args.epochs} epochs")
+        start_time = time.time()
+        steps_per_epoch = len(data_loader_train)
+        for epoch in range(args.start_epoch, args.epochs):
+            sampler_train.set_epoch(epoch)
 
-        train_one_epoch(model, model_without_ddp, data_loader_train,
-                        optimizer, device, epoch, log_writer=log_writer, args=args, steps_per_epoch=steps_per_epoch)
-
-        # Save checkpoint periodically
-        if epoch % args.save_last_freq == 0 or epoch + 1 == args.epochs:
-            misc.save_model(
+            train_one_epoch(
+                model,
+                model_without_ddp,
+                data_loader_train,
+                optimizer,
+                device,
+                epoch,
+                log_writer=log_writer,
                 args=args,
-                model_without_ddp=model_without_ddp,
-                optimizer=optimizer,
-                epoch=epoch,
-                epoch_name="last"
+                steps_per_epoch=steps_per_epoch,
+                wandb_run=wandb_run,
             )
 
-        if epoch % 100 == 0 and epoch > 0:
-            misc.save_model(
-                args=args,
-                model_without_ddp=model_without_ddp,
-                optimizer=optimizer,
-                epoch=epoch
-            )
+            # Save checkpoint periodically
+            if epoch % args.save_last_freq == 0 or epoch + 1 == args.epochs:
+                misc.save_model(
+                    args=args,
+                    model_without_ddp=model_without_ddp,
+                    optimizer=optimizer,
+                    epoch=epoch,
+                    epoch_name="last"
+                )
 
-        # Perform online evaluation at specified intervals
-        if args.online_eval and (epoch % args.eval_freq == 0 or epoch + 1 == args.epochs):
-            torch.cuda.empty_cache()
-            with torch.no_grad():
-                evaluate(model_without_ddp, args, epoch,
-                         batch_size=args.gen_bsz, log_writer=log_writer)
-            torch.cuda.empty_cache()
+            if epoch % 100 == 0 and epoch > 0:
+                misc.save_model(
+                    args=args,
+                    model_without_ddp=model_without_ddp,
+                    optimizer=optimizer,
+                    epoch=epoch
+                )
 
-        if misc.is_main_process() and log_writer is not None:
-            log_writer.flush()
+            # Perform online evaluation at specified intervals
+            if args.online_eval and (epoch % args.eval_freq == 0 or epoch + 1 == args.epochs):
+                torch.cuda.empty_cache()
+                with torch.no_grad():
+                    evaluate(
+                        model_without_ddp,
+                        args,
+                        epoch,
+                        batch_size=args.gen_bsz,
+                        log_writer=log_writer,
+                        vae=vae,
+                        wandb_run=wandb_run,
+                        wandb_step=(epoch + 1) * steps_per_epoch,
+                    )
+                torch.cuda.empty_cache()
 
-    total_time = time.time() - start_time
-    total_time_str = str(datetime.timedelta(seconds=int(total_time)))
-    print('Training time:', total_time_str)
+            if misc.is_main_process() and log_writer is not None:
+                log_writer.flush()
+
+        total_time = time.time() - start_time
+        total_time_str = str(datetime.timedelta(seconds=int(total_time)))
+        print('Training time:', total_time_str)
+        if wandb_run is not None:
+            wandb_run.log({
+                "train/total_time_sec": total_time,
+                "train/total_time_hms": total_time_str,
+            })
+    finally:
+        if log_writer is not None:
+            log_writer.close()
+        if wandb_run is not None:
+            wandb_run.finish()
 
 
 if __name__ == '__main__':

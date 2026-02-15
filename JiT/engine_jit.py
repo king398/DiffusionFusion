@@ -11,9 +11,13 @@ import util.misc as misc
 import util.lr_sched as lr_sched
 import torch_fidelity
 import copy
+try:
+    import wandb
+except ImportError:
+    wandb = None
 
 
-def train_one_epoch(model, model_without_ddp, data_loader, optimizer, device, epoch, log_writer=None, args=None, steps_per_epoch: int = None):
+def train_one_epoch(model, model_without_ddp, data_loader, optimizer, device, epoch, log_writer=None, args=None, steps_per_epoch: int = None, wandb_run=None):
     model.train(True)
     metric_logger = misc.MetricLogger(delimiter="  ")
     metric_logger.add_meter('lr', misc.SmoothedValue(
@@ -65,14 +69,31 @@ def train_one_epoch(model, model_without_ddp, data_loader, optimizer, device, ep
                 log_writer.add_scalar(
                     'train_loss', loss_value_reduce, epoch_1000x)
                 log_writer.add_scalar('lr', lr, epoch_1000x)
+        if wandb_run is not None and data_iter_step % args.log_freq == 0:
+            global_step = epoch * steps_per_epoch + data_iter_step
+            wandb_run.log({
+                "train/loss": loss_value_reduce,
+                "train/lr": lr,
+                "train/epoch_progress": epoch + data_iter_step / steps_per_epoch,
+            }, step=global_step)
 
 
-def evaluate(model_without_ddp, args, epoch, vae, batch_size=64, log_writer=None):
+def evaluate(model_without_ddp, args, epoch, vae, batch_size=64, log_writer=None, wandb_run=None, wandb_step=None):
 
     model_without_ddp.eval()
     world_size = misc.get_world_size()
     local_rank = misc.get_rank()
     num_steps = args.num_images // (batch_size * world_size) + 1
+    eval_image_interval = max(1, getattr(args, "wandb_eval_image_interval", 10))
+    wandb_table = None
+    if misc.is_main_process() and wandb_run is not None:
+        if wandb is None:
+            raise ImportError(
+                "wandb is not installed. Install it with `pip install wandb` or disable --use_wandb."
+            )
+        wandb_table = wandb.Table(
+            columns=["epoch", "global_index", "class_id", "image"]
+        )
 
     # Construct the folder name for saving generated images.
     save_folder = os.path.join(
@@ -102,12 +123,13 @@ def evaluate(model_without_ddp, args, epoch, vae, batch_size=64, log_writer=None
         0, class_num).repeat(args.num_images // class_num)
     class_label_gen_world = np.hstack([class_label_gen_world, np.zeros(50000)])
 
-    for i in range(num_steps):
-        print("Generation step {}/{}".format(i, num_steps))
+    for step_idx in range(num_steps):
+        print("Generation step {}/{}".format(step_idx, num_steps))
 
-        start_idx = world_size * batch_size * i + local_rank * batch_size
+        start_idx = world_size * batch_size * step_idx + local_rank * batch_size
         end_idx = start_idx + batch_size
         labels_gen = class_label_gen_world[start_idx:end_idx]
+        labels_gen_np = labels_gen.copy()
         labels_gen = torch.Tensor(labels_gen).long().cuda()
 
         with torch.amp.autocast('cuda', dtype=torch.bfloat16):
@@ -119,11 +141,21 @@ def evaluate(model_without_ddp, args, epoch, vae, batch_size=64, log_writer=None
         sampled_images = vae.decode(sampled_images / 0.13025).sample
         sampled_images = torch.clamp(127.5 * sampled_images + 128.0, 0, 255).permute(
             0, 2, 3, 1).to("cpu", dtype=torch.uint8).numpy()
-        for i, sample in enumerate(sampled_images):
-            index = i + world_size * batch_size * \
-                (num_steps-1) + local_rank * batch_size
+        for sample_idx, sample in enumerate(sampled_images):
+            index = sample_idx + world_size * batch_size * \
+                step_idx + local_rank * batch_size
+            if index >= args.num_images:
+                continue
             cv2.imwrite(os.path.join(save_folder, '{}.png'.format(
                 str(index).zfill(5))), sample)
+            if wandb_table is not None and index % eval_image_interval == 0:
+                class_id = int(labels_gen_np[sample_idx])
+                wandb_table.add_data(
+                    epoch,
+                    index,
+                    class_id,
+                    wandb.Image(sample, caption=f"class={class_id}, idx={index}")
+                )
 
     torch.distributed.barrier()
 
@@ -132,7 +164,7 @@ def evaluate(model_without_ddp, args, epoch, vae, batch_size=64, log_writer=None
     model_without_ddp.load_state_dict(model_state_dict)
 
     # compute FID and IS
-    if log_writer is not None:
+    if log_writer is not None or wandb_run is not None:
         if args.img_size == 256:
             fid_statistics_file = 'fid_stats/jit_in256_stats.npz'
         elif args.img_size == 512:
@@ -154,8 +186,20 @@ def evaluate(model_without_ddp, args, epoch, vae, batch_size=64, log_writer=None
         inception_score = metrics_dict['inception_score_mean']
         postfix = "_cfg{}_res{}".format(
             model_without_ddp.cfg_scale, args.img_size)
-        log_writer.add_scalar('fid{}'.format(postfix), fid, epoch)
-        log_writer.add_scalar('is{}'.format(postfix), inception_score, epoch)
+        if log_writer is not None:
+            log_writer.add_scalar('fid{}'.format(postfix), fid, epoch)
+            log_writer.add_scalar('is{}'.format(postfix), inception_score, epoch)
+        if misc.is_main_process() and wandb_run is not None:
+            log_payload = {
+                'eval/fid{}'.format(postfix): fid,
+                'eval/is{}'.format(postfix): inception_score,
+            }
+            if wandb_table is not None and len(wandb_table.data) > 0:
+                log_payload['eval/samples{}'.format(postfix)] = wandb_table
+            if wandb_step is None:
+                wandb_run.log(log_payload)
+            else:
+                wandb_run.log(log_payload, step=wandb_step)
         print("FID: {:.4f}, Inception Score: {:.4f}".format(
             fid, inception_score))
         shutil.rmtree(save_folder)
