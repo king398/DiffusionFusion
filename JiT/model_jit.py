@@ -392,7 +392,8 @@ def JiT_B_16(**kwargs):
 
 
 def JiT_B_2_4C(**kwargs):
-    return JiT(input_size=32, depth=12, hidden_size=768, num_heads=12,
+    kwargs.setdefault("input_size", 32)
+    return JiT(depth=12, hidden_size=768, num_heads=12,
                bottleneck_dim=128, in_context_len=32, in_context_start=4, patch_size=2,  **kwargs)
 
 
