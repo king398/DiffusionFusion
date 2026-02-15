@@ -161,8 +161,11 @@ def main(args):
     dataset = load_dataset(args.data_path, split="train")
     dataset = dataset.with_format("torch")
     dataset = dataset.with_transform(
-        lambda examples: {"image": [transform(
-            image.convert("RGB")) for image in examples["image"]]})
+        lambda examples: {
+            "image": [transform(image.convert("RGB")) for image in examples["image"]],
+            "label": examples["label"],
+        }
+    )
     sampler = DistributedSampler(
         dataset,
         num_replicas=dist.get_world_size(),
