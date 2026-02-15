@@ -39,8 +39,8 @@ def train_one_epoch(model, model_without_ddp, data_loader, optimizer, device, ep
         x = batch["x"].to(device, non_blocking=True)
         x = x * 0.13025
         labels = batch["y"]
-        labels = labels.to(device, non_blocking=True)
-
+        labels = labels.to(device, non_blocking=True).view(-1).long()
+        print(f"Labels: {labels}")
         with torch.amp.autocast('cuda', dtype=torch.bfloat16):
             loss = model(x, labels)
 
