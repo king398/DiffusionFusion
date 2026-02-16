@@ -167,7 +167,7 @@ def evaluate(model_without_ddp, args, epoch, vae, batch_size=64, log_writer=None
         elif args.img_size == 512:
             fid_statistics_file = 'fid_stats/jit_in512_stats.npz'
         else:
-            fid_statistics_file = '/work/nvme/betw/msalunkhe/data/fid_stats/jit_in256_stats.npz'
+            fid_statistics_file = '/work/nvme/betw/msalunkhe/data/jit_in256_stats.npz'
         metrics_dict = torch_fidelity.calculate_metrics(
             input1=save_folder,
             input2=None,
