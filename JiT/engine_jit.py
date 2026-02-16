@@ -135,7 +135,7 @@ def evaluate(model_without_ddp, args, epoch, vae, batch_size=64, log_writer=None
         torch.distributed.barrier()
 
         print("Decoding step {}/{}".format(step_idx, num_steps))
-        sampled_images = vae.decode(sampled_images / 0.13025).sample
+        sampled_images = vae.decode(sampled_images / vae.config.scaling_factor).sample
         sampled_images = torch.clamp(127.5 * sampled_images + 128.0, 0, 255).permute(
             0, 2, 3, 1).to("cpu", dtype=torch.uint8).numpy()
         for sample_idx, sample in enumerate(sampled_images):

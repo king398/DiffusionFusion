@@ -1,64 +1,30 @@
-from datasets import load_dataset
-import os
-from torchvision import transforms
-from JiT.util.crop import center_crop_arr
 import torch
+from diffusers.models import AutoencoderKL
+from PIL import Image
+import numpy as np
 
-os.environ["HF_HOME"] = "/work/nvme/betw/msalunkhe/data/huggingface"
+# Load the SDXL VAE
+vae = AutoencoderKL.from_pretrained("stabilityai/sdxl-vae")
 
-transform_train = transforms.Compose([
-    transforms.Lambda(lambda img: center_crop_arr(img, 256)),
-    transforms.RandomHorizontalFlip(),
-    transforms.PILToTensor(),
-])
+device = "cuda" if torch.cuda.is_available() else "cpu"
+vae.to(device)
 
-def transform(examples):
-    # examples is a dict of lists in batched mode
-    examples["  "] = [
-        transform_train(img.convert("RGB")) for img in examples["image"]
-    ]
-    return examples
+# Create random latent noise with the correct shape
+# SDXL VAE typically expects latents of shape:
+# (batch, latent_channels, height/8, width/8)
+# latent_channels for SDXL is usually 4
+random_latents = torch.randn(1, 4, 128, 128).to(device) /  vae.config.scaling_factor  # scale by VAE latent scaling factor
 
-def collate_fn(batch):
-    # batch is list of dicts like {"image": tensor, "label": int, ...}
-    images = torch.stack([b["image"] for b in batch], dim=0)
-    labels = torch.tensor([b.get("label", -1) for b in batch], dtype=torch.long)
-    return {"image": images, "label": labels}
+# Optional: scale the latents if needed
+# random_latents = random_latents * 0.18215
 
-def main():
-    train_dir = "/work/nvme/betw/msalunkhe/data/imagenet/"
+with torch.no_grad():
+    decoded = vae.decode(random_latents).sample
 
-    ds = load_dataset(
-        train_dir,
-        split="train",
-       ## streaming=True,
-    )
-
-    # Streaming: do sharding for DDP instead of DistributedSampler
-    world_size = int(os.environ.get("WORLD_SIZE", "1"))
-    rank = int(os.environ.get("RANK", "0"))
-
-    # Shuffle with a buffer (bigger buffer = better shuffle, more RAM)
-    ds = ds.shuffle(buffer_size=50_000, seed=0)
-    ds = ds.shard(num_shards=world_size, index=rank)
-
-    # Apply your torchvision transform on-the-fly
-    ds = ds.with_format("torch")  # ensure PIL objects come through
-    ds.set_transform(transform)
-
-    data_loader_train = torch.utils.data.DataLoader(
-        ds,
-        batch_size=args.,
-        num_workers=4,          # for IterableDataset, workers can help, but tune it
-        pin_memory=True,
-        persistent_workers=True,
-        collate_fn=collate_fn,
-        drop_last=True,
-    )
-
-    batch = next(iter(data_loader_train))
-    print(batch["image"].shape, batch["label"].shape)
-
-if __name__ == "__main__":
-    main()
-ds = load_dataset("timm/imagenet-1k-wds")
+# Convert to uint8 image
+img = ((decoded.clamp(-1, 1) + 1) * 127.5).cpu().numpy().astype(np.uint8)
+print(img.shape)
+img = np.transpose(img, (0, 2, 3, 1))[0]  # NHWC
+im = Image.fromarray(img)
+im.save("random_decoded.png")
+im.show()
