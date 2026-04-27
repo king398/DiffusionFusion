@@ -219,6 +219,10 @@ ATTRIBUTION_COLORMAP = [
     (1.00, (210, 32, 32)),
 ]
 
+DINO_COLOR = (0, 190, 220)
+LATENT_COLOR = (236, 120, 36)
+NEUTRAL_COLOR = (246, 246, 246)
+
 
 def heatmap_image(
     values: np.ndarray,
@@ -266,6 +270,51 @@ def attribution_colorbar(width: int, vmax: float, *, height: int = 46) -> Image.
     return panel
 
 
+def _source_rgb(source_share: np.ndarray) -> np.ndarray:
+    """Map 0=latent, 0.5=neutral, 1=DINO to a diverging RGB ramp."""
+    share = np.clip(source_share, 0.0, 1.0)
+    out = np.zeros((*share.shape, 3), dtype=np.float32)
+    latent = np.asarray(LATENT_COLOR, dtype=np.float32)
+    dino = np.asarray(DINO_COLOR, dtype=np.float32)
+    neutral = np.asarray(NEUTRAL_COLOR, dtype=np.float32)
+
+    lower = share <= 0.5
+    if np.any(lower):
+        t = (share[lower] / 0.5).reshape(-1, 1)
+        out[lower] = latent * (1.0 - t) + neutral * t
+
+    upper = ~lower
+    if np.any(upper):
+        t = ((share[upper] - 0.5) / 0.5).reshape(-1, 1)
+        out[upper] = neutral * (1.0 - t) + dino * t
+
+    return np.clip(out, 0, 255).astype(np.uint8)
+
+
+def source_mix_image(
+    dino_abs: np.ndarray,
+    latent_abs: np.ndarray,
+    size: int,
+    *,
+    percentile: float = 98.0,
+    gamma: float = 0.65,
+) -> Image.Image:
+    dino = np.nan_to_num(np.asarray(dino_abs, dtype=np.float32), nan=0.0, posinf=0.0, neginf=0.0)
+    latent = np.nan_to_num(np.asarray(latent_abs, dtype=np.float32), nan=0.0, posinf=0.0, neginf=0.0)
+    total = np.maximum(dino + latent, 0.0)
+    share = np.divide(dino, total, out=np.full_like(total, 0.5), where=total > 0.0)
+    source_colors = _source_rgb(share).astype(np.float32)
+
+    strength = normalize_map(total, robust_vmax(total, percentile), gamma=gamma)
+    strength = np.clip(0.12 + 0.88 * strength, 0.0, 1.0)[..., None]
+    white = np.full_like(source_colors, 255.0)
+    colors = white * (1.0 - strength) + source_colors * strength
+    return Image.fromarray(np.clip(colors, 0, 255).astype(np.uint8), mode="RGB").resize(
+        (size, size),
+        Image.Resampling.NEAREST,
+    )
+
+
 def difference_image(values: np.ndarray, size: int, *, percentile: float = 98.0) -> Image.Image:
     arr = np.asarray(values, dtype=np.float32)
     arr = np.nan_to_num(arr, nan=0.0, posinf=0.0, neginf=0.0)
@@ -287,6 +336,88 @@ def difference_image(values: np.ndarray, size: int, *, percentile: float = 98.0)
         ],
     )
     return Image.fromarray(colors, mode="RGB").resize((size, size), Image.Resampling.NEAREST)
+
+
+def _share(numerator: float, denominator: float) -> float:
+    return float(numerator / denominator) if denominator > 0.0 else 0.0
+
+
+def _format_pct(value: float) -> str:
+    return f"{100.0 * value:.1f}%"
+
+
+def _load_font(size: int) -> ImageFont.ImageFont:
+    try:
+        return ImageFont.truetype("DejaVuSans.ttf", size)
+    except OSError:
+        return ImageFont.load_default()
+
+
+def _draw_source_bar(
+    draw: ImageDraw.ImageDraw,
+    box: tuple[int, int, int, int],
+    dino_share: float,
+) -> None:
+    x0, y0, x1, y1 = box
+    dino_share = float(np.clip(dino_share, 0.0, 1.0))
+    split = int(round(x0 + (x1 - x0) * dino_share))
+    draw.rectangle([x0, y0, x1, y1], fill=LATENT_COLOR)
+    if split > x0:
+        draw.rectangle([x0, y0, split, y1], fill=DINO_COLOR)
+    draw.rectangle([x0, y0, x1, y1], outline=(210, 210, 210), width=1)
+
+
+def attribution_summary_panel(
+    width: int,
+    *,
+    dino_abs: np.ndarray,
+    latent_abs: np.ndarray,
+    row: int,
+    col: int,
+) -> Image.Image:
+    height = 92
+    panel = Image.new("RGB", (width, height), "white")
+    draw = ImageDraw.Draw(panel)
+    title_font = _load_font(14)
+    font = _load_font(12)
+
+    dino_total = float(np.asarray(dino_abs, dtype=np.float32).sum())
+    latent_total = float(np.asarray(latent_abs, dtype=np.float32).sum())
+    total_share = _share(dino_total, dino_total + latent_total)
+
+    dino_aligned = float(dino_abs[row, col])
+    latent_aligned = float(latent_abs[row, col])
+    aligned_share = _share(dino_aligned, dino_aligned + latent_aligned)
+
+    dino_nonlocal = max(0.0, dino_total - dino_aligned)
+    latent_nonlocal = max(0.0, latent_total - latent_aligned)
+    nonlocal_share = _share(dino_nonlocal, dino_nonlocal + latent_nonlocal)
+
+    draw.text((8, 6), "source summary", fill=(24, 24, 24), font=title_font)
+    legend_x = width - 242
+    draw.rectangle([legend_x, 10, legend_x + 12, 22], fill=DINO_COLOR)
+    draw.text((legend_x + 18, 8), "DINO", fill=(24, 24, 24), font=font)
+    draw.rectangle([legend_x + 78, 10, legend_x + 90, 22], fill=LATENT_COLOR)
+    draw.text((legend_x + 96, 8), "latent", fill=(24, 24, 24), font=font)
+
+    rows = [
+        ("total abs", total_share, dino_total, latent_total),
+        ("target patch", aligned_share, dino_aligned, latent_aligned),
+        ("nonlocal", nonlocal_share, dino_nonlocal, latent_nonlocal),
+    ]
+    label_x = 8
+    bar_x = 116
+    value_space = 250 if width >= 700 else 170
+    bar_w = max(120, width - bar_x - value_space)
+    value_x = bar_x + bar_w + 10
+    for idx, (label, share, dino_value, latent_value) in enumerate(rows):
+        y = 34 + idx * 18
+        draw.text((label_x, y - 2), label, fill=(40, 40, 40), font=font)
+        _draw_source_bar(draw, (bar_x, y, bar_x + bar_w, y + 10), share)
+        value = f"DINO {_format_pct(share)} | {dino_value:.2e} / {latent_value:.2e}"
+        draw.text((value_x, y - 3), value, fill=(40, 40, 40), font=font)
+
+    return panel
 
 
 def draw_patch_box(
@@ -316,10 +447,13 @@ def label_panel(image: Image.Image, title: str) -> Image.Image:
     panel = Image.new("RGB", (image.width, image.height + title_h), "white")
     panel.paste(image, (0, title_h))
     draw = ImageDraw.Draw(panel)
-    try:
-        font = ImageFont.truetype("DejaVuSans.ttf", 15)
-    except OSError:
-        font = ImageFont.load_default()
+    font = _load_font(15)
+    for size in (15, 14, 13, 12, 11):
+        candidate = _load_font(size)
+        bbox = draw.textbbox((0, 0), title, font=candidate)
+        if bbox[2] - bbox[0] <= image.width - 14:
+            font = candidate
+            break
     draw.text((7, 6), title, fill=(24, 24, 24), font=font)
     return panel
 
@@ -341,23 +475,37 @@ def save_figure(
     recon_panel = recon.copy()
     draw_patch_box(recon_panel, row, col, patch_size)
 
-    shared_vmax = robust_vmax(
-        np.concatenate([dino_abs.reshape(-1), latent_abs.reshape(-1)]),
-        heatmap_percentile,
-    )
+    dino_vmax = robust_vmax(dino_abs, heatmap_percentile)
+    latent_vmax = robust_vmax(latent_abs, heatmap_percentile)
+    total_abs = dino_abs + latent_abs
+    total_vmax = robust_vmax(total_abs, heatmap_percentile)
     dino_panel = heatmap_image(
         dino_abs,
         image_size,
-        vmax=shared_vmax,
+        vmax=dino_vmax,
         gamma=heatmap_gamma,
         resample=Image.Resampling.NEAREST,
     )
     latent_panel = heatmap_image(
         latent_abs,
         image_size,
-        vmax=shared_vmax,
+        vmax=latent_vmax,
         gamma=heatmap_gamma,
         resample=Image.Resampling.NEAREST,
+    )
+    total_panel = heatmap_image(
+        total_abs,
+        image_size,
+        vmax=total_vmax,
+        gamma=heatmap_gamma,
+        resample=Image.Resampling.NEAREST,
+    )
+    mix_panel = source_mix_image(
+        dino_abs,
+        latent_abs,
+        image_size,
+        percentile=heatmap_percentile,
+        gamma=heatmap_gamma,
     )
     diff_panel = difference_image(
         latent_abs - dino_abs,
@@ -366,27 +514,40 @@ def save_figure(
     )
 
     heat_patch = max(image_size // grid_size, 1)
-    for panel in (dino_panel, latent_panel, diff_panel):
+    for panel in (dino_panel, latent_panel, total_panel, mix_panel, diff_panel):
         draw_patch_box(panel, row, col, heat_patch, color=(0, 255, 255), width=2)
 
     panels = [
         label_panel(recon_panel, "decoded image"),
-        label_panel(dino_panel, f"DINO abs | max {shared_vmax:.2e}"),
-        label_panel(latent_panel, "latent abs | same scale"),
-        label_panel(diff_panel, "latent abs - DINO abs"),
+        label_panel(dino_panel, f"DINO abs pattern | pmax {dino_vmax:.2e}"),
+        label_panel(latent_panel, f"latent abs pattern | pmax {latent_vmax:.2e}"),
+        label_panel(total_panel, f"total abs | pmax {total_vmax:.2e}"),
+        label_panel(mix_panel, "source mix | cyan=DINO"),
+        label_panel(diff_panel, "excess: latent red, DINO blue"),
     ]
     gap = 8
+    cols = 3
+    rows = 2
+    summary = attribution_summary_panel(
+        panels[0].width * cols + gap * (cols - 1),
+        dino_abs=dino_abs,
+        latent_abs=latent_abs,
+        row=row,
+        col=col,
+    )
     canvas = Image.new(
         "RGB",
-        (panels[0].width * 2 + gap, panels[0].height * 2 + gap + 46),
+        (
+            panels[0].width * cols + gap * (cols - 1),
+            panels[0].height * rows + gap * (rows - 1) + summary.height,
+        ),
         "white",
     )
     for idx, panel in enumerate(panels):
-        x = (idx % 2) * (panel.width + gap)
-        y = (idx // 2) * (panel.height + gap)
+        x = (idx % cols) * (panel.width + gap)
+        y = (idx // cols) * (panel.height + gap)
         canvas.paste(panel, (x, y))
-    colorbar = attribution_colorbar(canvas.width, shared_vmax)
-    canvas.paste(colorbar, (0, panels[0].height * 2 + gap))
+    canvas.paste(summary, (0, panels[0].height * rows + gap * (rows - 1)))
     canvas.save(path, format="PNG", compress_level=3)
 
 
