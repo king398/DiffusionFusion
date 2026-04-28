@@ -5,9 +5,9 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=16
-#SBATCH --gpus-per-node=4
+#SBATCH --gpus-per-node=1
 #SBATCH --mem=256G
-#SBATCH --time=25:00:00
+#SBATCH --time=4:00:00
 #SBATCH -o slurm-%j.out
 #SBATCH -e slurm-%j.err
 #SBATCH --mail-user=mithils3@illinois.edu
@@ -23,7 +23,7 @@ module load "${CUDA_MODULE}"
 source /u/msalunkhe/.venv/bin/activate
 cd /u/msalunkhe/DiffusionFusion/JiT
 
-NPROC_PER_NODE="${NPROC_PER_NODE:-${SLURM_GPUS_ON_NODE:-4}}"
+NPROC_PER_NODE="${NPROC_PER_NODE:-${SLURM_GPUS_ON_NODE:-1}}"
 export CUDA_DEVICE_ORDER=PCI_BUS_ID
 export PYTHONFAULTHANDLER=1
 export NCCL_DEBUG="${NCCL_DEBUG:-INFO}"
