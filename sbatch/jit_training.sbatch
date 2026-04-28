@@ -23,14 +23,15 @@ module load "${CUDA_MODULE}"
 source /u/msalunkhe/.venv/bin/activate
 cd /u/msalunkhe/DiffusionFusion/JiT
 
-NPROC_PER_NODE="${NPROC_PER_NODE:-${SLURM_GPUS_ON_NODE:-1}}"
+EXPECTED_GPUS="${EXPECTED_GPUS:-${SLURM_GPUS_ON_NODE:-1}}"
+NPROC_PER_NODE="${NPROC_PER_NODE:-${SLURM_GPUS_ON_NODE:-${EXPECTED_GPUS}}}"
 export CUDA_DEVICE_ORDER=PCI_BUS_ID
 export PYTHONFAULTHANDLER=1
 export NCCL_DEBUG="${NCCL_DEBUG:-INFO}"
 export NCCL_DEBUG_SUBSYS="${NCCL_DEBUG_SUBSYS:-INIT,ENV,NET}"
 # This is a single-node job. Avoid loading the site OFI net plugin by default;
 # the loaded plugin is cuda129, while the current venv may use a cu130 PyTorch.
-export NCCL_NET_PLUGIN="${NCCL_NET_PLUGIN:-none}"
+export NCCL_NET_PLUGIN="${NCCL_NET_PLUGIN_OVERRIDE:-none}"
 export TORCH_NCCL_ASYNC_ERROR_HANDLING="${TORCH_NCCL_ASYNC_ERROR_HANDLING:-1}"
 export TORCH_NCCL_ENABLE_MONITORING="${TORCH_NCCL_ENABLE_MONITORING:-1}"
 export TORCH_NCCL_HEARTBEAT_TIMEOUT_SEC="${TORCH_NCCL_HEARTBEAT_TIMEOUT_SEC:-1200}"
@@ -42,6 +43,7 @@ echo "job_id=${SLURM_JOB_ID:-unset}"
 echo "node_list=${SLURM_JOB_NODELIST:-unset}"
 echo "slurm_gpus_on_node=${SLURM_GPUS_ON_NODE:-unset}"
 echo "cuda_visible_devices=${CUDA_VISIBLE_DEVICES:-unset}"
+echo "expected_gpus=${EXPECTED_GPUS}"
 echo "nproc_per_node=${NPROC_PER_NODE}"
 echo "cuda_module=${CUDA_MODULE}"
 echo "nccl_debug=${NCCL_DEBUG}"
@@ -80,6 +82,19 @@ print(f"torch.cuda.is_available()={available}")
 print(f"torch.cuda.device_count()={device_count}")
 if device_count < 1:
     sys.exit("CUDA preflight failed before torchrun: no CUDA devices are visible to PyTorch")
+expected_gpus = int(os.environ.get("EXPECTED_GPUS", "1"))
+nproc_per_node = int(os.environ.get("NPROC_PER_NODE", str(expected_gpus)))
+if device_count < expected_gpus:
+    sys.exit(
+        "CUDA preflight failed before torchrun: "
+        f"expected {expected_gpus} visible GPU(s), got {device_count}. "
+        "Check #SBATCH --gpus-per-node / account allocation, or submit with EXPECTED_GPUS=1 for a single-GPU debug run."
+    )
+if nproc_per_node > device_count:
+    sys.exit(
+        "CUDA preflight failed before torchrun: "
+        f"NPROC_PER_NODE={nproc_per_node} but only {device_count} CUDA device(s) are visible."
+    )
 for idx in range(device_count):
     print(f"cuda:{idx}={torch.cuda.get_device_name(idx)}")
 PY

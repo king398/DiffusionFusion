@@ -14,6 +14,8 @@ import torch.distributed as dist
 def distributed_barrier(device_id=None):
     if not is_dist_avail_and_initialized():
         return
+    if dist.get_world_size() <= 1:
+        return
 
     barrier_kwargs = {}
     if torch.cuda.is_available():
