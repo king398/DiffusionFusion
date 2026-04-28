@@ -273,7 +273,8 @@ def init_distributed_mode(args):
         "rank": args.rank,
         "timeout": datetime.timedelta(seconds=dist_timeout_sec),
     }
-    if "device_id" in inspect.signature(torch.distributed.init_process_group).parameters:
+    use_init_device_id = os.environ.get("JIT_USE_INIT_DEVICE_ID", "0") == "1"
+    if use_init_device_id and "device_id" in inspect.signature(torch.distributed.init_process_group).parameters:
         init_kwargs["device_id"] = torch.device("cuda", args.gpu)
     torch.distributed.init_process_group(**init_kwargs)
     distributed_barrier(args.gpu)

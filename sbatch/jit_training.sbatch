@@ -16,8 +16,9 @@
 set -euo pipefail
 
 
+CUDA_MODULE="${CUDA_MODULE:-cuda/13.1.1}"
 module load python/3.11.9
-module load cuda/13.1.1
+module load "${CUDA_MODULE}"
 
 source /u/msalunkhe/.venv/bin/activate
 cd /u/msalunkhe/DiffusionFusion/JiT
@@ -25,6 +26,14 @@ cd /u/msalunkhe/DiffusionFusion/JiT
 NPROC_PER_NODE="${NPROC_PER_NODE:-${SLURM_GPUS_ON_NODE:-4}}"
 export CUDA_DEVICE_ORDER=PCI_BUS_ID
 export PYTHONFAULTHANDLER=1
+export NCCL_DEBUG="${NCCL_DEBUG:-INFO}"
+export NCCL_DEBUG_SUBSYS="${NCCL_DEBUG_SUBSYS:-INIT,ENV,NET}"
+# This is a single-node job. Avoid loading the site OFI net plugin by default;
+# the loaded plugin is cuda129, while the current venv may use a cu130 PyTorch.
+export NCCL_NET_PLUGIN="${NCCL_NET_PLUGIN:-none}"
+export TORCH_NCCL_ASYNC_ERROR_HANDLING="${TORCH_NCCL_ASYNC_ERROR_HANDLING:-1}"
+export TORCH_NCCL_ENABLE_MONITORING="${TORCH_NCCL_ENABLE_MONITORING:-1}"
+export TORCH_NCCL_HEARTBEAT_TIMEOUT_SEC="${TORCH_NCCL_HEARTBEAT_TIMEOUT_SEC:-1200}"
 
 echo "===== Slurm/CUDA preflight ====="
 echo "date=$(date)"
@@ -34,6 +43,10 @@ echo "node_list=${SLURM_JOB_NODELIST:-unset}"
 echo "slurm_gpus_on_node=${SLURM_GPUS_ON_NODE:-unset}"
 echo "cuda_visible_devices=${CUDA_VISIBLE_DEVICES:-unset}"
 echo "nproc_per_node=${NPROC_PER_NODE}"
+echo "cuda_module=${CUDA_MODULE}"
+echo "nccl_debug=${NCCL_DEBUG}"
+echo "nccl_debug_subsys=${NCCL_DEBUG_SUBSYS}"
+echo "nccl_net_plugin=${NCCL_NET_PLUGIN}"
 echo "python=$(which python)"
 echo "torchrun=$(which torchrun)"
 module list
@@ -45,7 +58,18 @@ import sys
 import torch
 
 print(f"PyTorch {torch.__version__}, built for CUDA {torch.version.cuda}")
+try:
+    print(f"PyTorch NCCL version={torch.cuda.nccl.version()}")
+except Exception as exc:
+    print(f"PyTorch NCCL version unavailable: {type(exc).__name__}: {exc}")
 print(f"CUDA_VISIBLE_DEVICES={os.environ.get('CUDA_VISIBLE_DEVICES', 'unset')}")
+for name in (
+    "NCCL_DEBUG",
+    "NCCL_DEBUG_SUBSYS",
+    "NCCL_NET_PLUGIN",
+    "TORCH_NCCL_ASYNC_ERROR_HANDLING",
+):
+    print(f"{name}={os.environ.get(name, 'unset')}")
 try:
     available = torch.cuda.is_available()
     device_count = torch.cuda.device_count()
