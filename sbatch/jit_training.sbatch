@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH -J JiT_80ep
+#SBATCH -J JiT_struct_cfg_mask_80ep
 #SBATCH -A betw-dtai-gh
 #SBATCH -p ghx4
 #SBATCH --nodes=1
@@ -102,13 +102,14 @@ echo "===== End preflight ====="
 
 
 IMAGENET_PATH="/work/hdd/bgnp/msalunkhe/data/imagenet/"
-OUTPUT_DIR="/work/nvme/bgnp/msalunkhe/outputs/jit_dual_patch_size_2_constant_80ep"
-WANDB_RUN_NAME="${WANDB_RUN_NAME:-jit_dual_patch_size_2_constant_80ep}"
+OUTPUT_DIR="/work/nvme/bgnp/msalunkhe/outputs/jit_dual_struct_cfg_mask_80ep"
+WANDB_RUN_NAME="${WANDB_RUN_NAME:-jit_dual_struct_cfg_mask_80ep}"
 FID_STATS_PATH="${FID_STATS_PATH:-/u/msalunkhe/DiffusionFusion/JiT/fid_stats/jit_in256_stats.npz}"
 NUM_IMAGES="${NUM_IMAGES:-10000}"
 EVAL_FREQ="${EVAL_FREQ:-20}"
 EPOCHS="${EPOCHS:-80}"
 LR_SCHEDULE="${LR_SCHEDULE:-constant}"
+DINO_TIME_SHIFT="${DINO_TIME_SHIFT:-0.0}"
 BATCH_SIZE="${BATCH_SIZE:-128}"
 ACCUM_ITER="${ACCUM_ITER:-2}"
 mkdir -p "${OUTPUT_DIR}"
@@ -122,6 +123,9 @@ main_jit.py \
 --P_mean -0.8 \
 --P_std 0.8 \
 --noise_scale 1.0 \
+--dino_time_shift "${DINO_TIME_SHIFT}" \
+--no_ddp_static_graph \
+--ddp_find_unused_parameters \
 --batch_size "${BATCH_SIZE}" \
 --accum_iter "${ACCUM_ITER}" \
 --blr 5e-5 \

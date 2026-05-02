@@ -2,7 +2,19 @@ import unittest
 
 import torch
 
-from JiT.model_jit import JiT_models
+from JiT.model_jit import CrossFusionBlock, JiT_models
+
+
+class _AddDirection(torch.nn.Module):
+    def __init__(self, value: float):
+        super().__init__()
+        self.value = value
+        self.calls = 0
+
+    def forward(self, x, context, c, feat_rope=None, num_patches=0, context_num_patches=0):
+        del context, c, feat_rope, num_patches, context_num_patches
+        self.calls += 1
+        return x + self.value
 
 
 class JiTDualStreamTests(unittest.TestCase):
@@ -52,6 +64,21 @@ class JiTDualStreamTests(unittest.TestCase):
 
         self.assertEqual(latent_out.shape, latent.shape)
         self.assertEqual(dino_out.shape, dino.shape)
+
+    def test_cross_fusion_mask_skips_only_dino_to_latent_direction(self):
+        block = CrossFusionBlock(hidden_size=4, num_heads=2)
+        block.latent_from_dino = _AddDirection(10.0)
+        block.dino_from_latent = _AddDirection(20.0)
+        latent = torch.zeros(1, 2, 4)
+        dino = torch.zeros(1, 2, 4)
+        c = torch.zeros(1, 4)
+
+        latent_out, dino_out = block(latent, dino, c, mask_dino_to_latent=True)
+
+        self.assertTrue(torch.equal(latent_out, latent))
+        self.assertTrue(torch.equal(dino_out, dino + 20.0))
+        self.assertEqual(block.latent_from_dino.calls, 0)
+        self.assertEqual(block.dino_from_latent.calls, 1)
 
 
 if __name__ == "__main__":

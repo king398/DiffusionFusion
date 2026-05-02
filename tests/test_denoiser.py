@@ -13,8 +13,16 @@ class _ConstantPredictor(torch.nn.Module):
         super().__init__()
         self.value = value
 
-    def forward(self, z_latent, z_dino, t, labels, dino_t=None):
-        del t, labels, dino_t
+    def forward(
+        self,
+        z_latent,
+        z_dino,
+        t,
+        labels,
+        dino_t=None,
+        mask_dino_to_latent: bool = False,
+    ):
+        del t, labels, dino_t, mask_dino_to_latent
         latent = torch.full_like(z_latent, self.value)
         dino = torch.full_like(z_dino, -self.value)
         return latent, dino
@@ -25,12 +33,44 @@ class _FinalStepPredictor(torch.nn.Module):
         super().__init__()
         self.value = value
 
-    def forward(self, z_latent, z_dino, t, labels, dino_t=None):
-        del labels, dino_t
+    def forward(
+        self,
+        z_latent,
+        z_dino,
+        t,
+        labels,
+        dino_t=None,
+        mask_dino_to_latent: bool = False,
+    ):
+        del labels, dino_t, mask_dino_to_latent
         final_mask = (t > 0.97).view(-1, 1, 1, 1)
         latent = torch.where(final_mask, torch.full_like(z_latent, self.value), z_latent)
         dino = torch.where(final_mask, torch.full_like(z_dino, -self.value), z_dino)
         return latent, dino
+
+
+class _MaskRecordingPredictor(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.calls = []
+
+    def forward(
+        self,
+        z_latent,
+        z_dino,
+        t,
+        labels,
+        dino_t=None,
+        mask_dino_to_latent: bool = False,
+    ):
+        del t, dino_t
+        self.calls.append(
+            {
+                "labels": labels.detach().clone(),
+                "mask_dino_to_latent": mask_dino_to_latent,
+            }
+        )
+        return torch.zeros_like(z_latent), torch.zeros_like(z_dino)
 
 
 class _ConstantDinoTimePredictor(torch.nn.Module):
@@ -42,8 +82,16 @@ class _ConstantDinoTimePredictor(torch.nn.Module):
         self.seen_t = None
         self.seen_dino_t = None
 
-    def forward(self, z_latent, z_dino, t, labels, dino_t=None):
-        del labels
+    def forward(
+        self,
+        z_latent,
+        z_dino,
+        t,
+        labels,
+        dino_t=None,
+        mask_dino_to_latent: bool = False,
+    ):
+        del labels, mask_dino_to_latent
         self.seen_t = t.detach().clone()
         self.seen_dino_t = dino_t.detach().clone()
         return torch.full_like(z_latent, self.value), torch.full_like(z_dino, self.value)
@@ -72,12 +120,12 @@ class DenoiserSamplingTests(unittest.TestCase):
             cfg=1.0,
             interval_min=0.0,
             interval_max=1.0,
-            dino_time_shift=None,
+            dino_time_shift=0.0,
         )
         args.update(overrides)
         return SimpleNamespace(**args)
 
-    def test_default_dino_time_shift_matches_rae_dim_ratio(self):
+    def test_default_dino_time_shift_keeps_streams_synchronized(self):
         with patch.dict(
             denoiser_module.JiT_models,
             {"test-model": lambda **_kwargs: _ConstantPredictor(0.0)},
@@ -91,9 +139,19 @@ class DenoiserSamplingTests(unittest.TestCase):
                 )
             )
 
-        rae_shift = math.sqrt((768 * 16 * 16) / (4 * 32 * 32))
-        self.assertAlmostEqual(math.exp(model.dino_time_shift), rae_shift)
-        self.assertAlmostEqual(model.dino_time(torch.tensor([0.5])).item(), rae_shift / (1.0 + rae_shift))
+        self.assertEqual(model.dino_time_shift, 0.0)
+        t = torch.tensor([0.25, 0.5, 0.75]).view(-1, 1, 1, 1)
+        self.assertTrue(torch.equal(model.dino_time(t), t))
+
+    def test_none_dino_time_shift_keeps_checkpoint_args_synchronized(self):
+        with patch.dict(
+            denoiser_module.JiT_models,
+            {"test-model": lambda **_kwargs: _ConstantPredictor(0.0)},
+            clear=False,
+        ):
+            model = denoiser_module.Denoiser(self._build_args(dino_time_shift=None))
+
+        self.assertEqual(model.dino_time_shift, 0.0)
 
     def test_dino_time_shift_is_logit_space_and_preserves_endpoints(self):
         with patch.dict(
@@ -130,6 +188,60 @@ class DenoiserSamplingTests(unittest.TestCase):
 
         self.assertTrue(torch.equal(predictor.seen_t, torch.tensor([0.25])))
         self.assertTrue(torch.equal(predictor.seen_dino_t, torch.tensor([0.5])))
+
+    def test_forward_sample_masks_dino_to_latent_only_for_unconditional_pass(self):
+        predictor = _MaskRecordingPredictor()
+        with patch.dict(
+            denoiser_module.JiT_models,
+            {"test-model": lambda **_kwargs: predictor},
+            clear=False,
+        ):
+            model = denoiser_module.Denoiser(self._build_args(dino_time_shift=0.0))
+
+        z_latent = torch.zeros(2, 1, 1, 1)
+        z_dino = torch.zeros(2, 1, 1, 1)
+        t = torch.full((2, 1, 1, 1), 0.25)
+        labels = torch.tensor([3, 7], dtype=torch.long)
+
+        model._forward_sample_xpred(z_latent, z_dino, t, labels)
+
+        self.assertEqual(len(predictor.calls), 2)
+        self.assertFalse(predictor.calls[0]["mask_dino_to_latent"])
+        self.assertTrue(torch.equal(predictor.calls[0]["labels"], labels))
+        self.assertTrue(predictor.calls[1]["mask_dino_to_latent"])
+        self.assertTrue(
+            torch.equal(
+                predictor.calls[1]["labels"],
+                torch.full_like(labels, model.num_classes),
+            )
+        )
+
+    def test_training_label_drop_jointly_activates_structural_mask(self):
+        predictor = _MaskRecordingPredictor()
+        with patch.dict(
+            denoiser_module.JiT_models,
+            {"test-model": lambda **_kwargs: predictor},
+            clear=False,
+        ):
+            model = denoiser_module.Denoiser(
+                self._build_args(label_drop_prob=1.0, dino_time_shift=0.0)
+            )
+
+        model.train()
+        latent = torch.zeros(2, 1, 1, 1)
+        dino = torch.zeros(2, 1, 1, 1)
+        labels = torch.tensor([3, 7], dtype=torch.long)
+
+        model(latent, dino, labels)
+
+        self.assertEqual(len(predictor.calls), 1)
+        self.assertTrue(predictor.calls[0]["mask_dino_to_latent"])
+        self.assertTrue(
+            torch.equal(
+                predictor.calls[0]["labels"],
+                torch.full_like(labels, model.num_classes),
+            )
+        )
 
     def test_euler_step_uses_separate_dino_time_delta(self):
         with patch.dict(

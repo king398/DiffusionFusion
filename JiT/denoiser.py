@@ -1,5 +1,4 @@
 import argparse
-import math
 from typing import Callable
 
 import torch
@@ -37,7 +36,10 @@ class Denoiser(nn.Module):
         self.noise_scale: float = args.noise_scale
         self.latent_loss_weight: float = getattr(args, "latent_loss_weight", 1.0)
         self.dino_loss_weight: float = getattr(args, "dino_loss_weight", 1.0)
-        self.dino_time_shift: float = self._resolve_dino_time_shift(args)
+        dino_time_shift = getattr(args, "dino_time_shift", 0.0)
+        self.dino_time_shift: float = (
+            0.0 if dino_time_shift is None else float(dino_time_shift)
+        )
 
         # ema
         self.ema_decay1: float = args.ema_decay1
@@ -53,27 +55,17 @@ class Denoiser(nn.Module):
             args.interval_min, args.interval_max)
 
     def drop_labels(self, labels: torch.Tensor) -> torch.Tensor:
-        drop = torch.rand(
-            labels.shape[0], device=labels.device) < self.label_drop_prob
-        out = torch.where(drop, torch.full_like(
-            labels, self.num_classes), labels)
-        return out
+        labels_dropped, _ = self.drop_labels_for_cfg(labels)
+        return labels_dropped
+
+    def drop_labels_for_cfg(self, labels: torch.Tensor) -> tuple[torch.Tensor, bool]:
+        drop = torch.rand((), device=labels.device) < self.label_drop_prob
+        out = torch.where(drop, torch.full_like(labels, self.num_classes), labels)
+        return out, bool(drop.item())
 
     def sample_t(self, n: int, device: torch.device | None = None) -> torch.Tensor:
         z = torch.randn(n, device=device) * self.P_std + self.P_mean
         return torch.sigmoid(z)
-
-    def _default_dino_time_shift(self) -> float:
-        dino_dim = self.dino_hidden_size * self.dino_patches * self.dino_patches
-        latent_dim = self.latent_in_chans * self.latent_size * self.latent_size
-        shift = math.sqrt(dino_dim / latent_dim)
-        return math.log(max(1.0, shift))
-
-    def _resolve_dino_time_shift(self, args: argparse.Namespace) -> float:
-        shift = getattr(args, "dino_time_shift", None)
-        if shift is None:
-            return self._default_dino_time_shift()
-        return float(shift)
 
     def dino_time(self, t: torch.Tensor) -> torch.Tensor:
         if self.dino_time_shift == 0.0:
@@ -96,6 +88,7 @@ class Denoiser(nn.Module):
         t: torch.Tensor,
         labels: torch.Tensor,
         dino_t: torch.Tensor | None = None,
+        mask_dino_to_latent: bool = False,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         return self.net(
             z_latent,
@@ -103,10 +96,15 @@ class Denoiser(nn.Module):
             t.flatten(),
             labels,
             dino_t.flatten() if dino_t is not None else None,
+            mask_dino_to_latent=mask_dino_to_latent,
         )
 
     def forward(self, latent: torch.Tensor, dino: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
-        labels_dropped = self.drop_labels(labels) if self.training else labels
+        if self.training:
+            labels_dropped, mask_dino_to_latent = self.drop_labels_for_cfg(labels)
+        else:
+            labels_dropped = labels
+            mask_dino_to_latent = False
         t = self.sample_t(latent.size(
             0), device=latent.device).view(-1, *([1] * (latent.ndim - 1)))
         dino_t = self.dino_time(t)
@@ -118,7 +116,7 @@ class Denoiser(nn.Module):
         v_dino = (dino - z_dino) / (1 - dino_t).clamp_min(self.t_eps)
 
         latent_pred, dino_pred = self._net_forward(
-            z_latent, z_dino, t, labels_dropped, dino_t)
+            z_latent, z_dino, t, labels_dropped, dino_t, mask_dino_to_latent)
         v_latent_pred = (latent_pred - z_latent) / \
             (1 - t).clamp_min(self.t_eps)
         v_dino_pred = (dino_pred - z_dino) / (1 - dino_t).clamp_min(self.t_eps)
@@ -198,6 +196,7 @@ class Denoiser(nn.Module):
             t,
             torch.full_like(labels, self.num_classes),
             dino_t,
+            mask_dino_to_latent=True,
         )
         cfg_scale_interval = self._cfg_scale_interval(t)
         latent_pred = latent_uncond + cfg_scale_interval * \

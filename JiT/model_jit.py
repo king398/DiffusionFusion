@@ -454,19 +454,30 @@ class CrossFusionBlock(nn.Module):
             hidden_size, num_heads, attn_drop=attn_drop, proj_drop=proj_drop
         )
 
-    def forward(self, latent, dino, c, feat_rope=None, latent_num_patches=0, dino_num_patches=0, dino_c=None):
+    def forward(
+        self,
+        latent,
+        dino,
+        c,
+        feat_rope=None,
+        latent_num_patches=0,
+        dino_num_patches=0,
+        dino_c=None,
+        mask_dino_to_latent: bool = False,
+    ):
         if dino_c is None:
             dino_c = c
         latent_snapshot = latent
         dino_snapshot = dino
-        latent = self.latent_from_dino(
-            latent_snapshot,
-            dino_snapshot,
-            c,
-            feat_rope=feat_rope,
-            num_patches=latent_num_patches,
-            context_num_patches=dino_num_patches,
-        )
+        if not mask_dino_to_latent:
+            latent = self.latent_from_dino(
+                latent_snapshot,
+                dino_snapshot,
+                c,
+                feat_rope=feat_rope,
+                num_patches=latent_num_patches,
+                context_num_patches=dino_num_patches,
+            )
         dino = self.dino_from_latent(
             dino_snapshot,
             latent_snapshot,
@@ -608,12 +619,13 @@ class JiT(nn.Module):
         imgs = x.reshape(shape=(x.shape[0], c, h * p, h * p))
         return imgs
 
-    def forward(self, latent, dino_features, t, y, dino_t=None):
+    def forward(self, latent, dino_features, t, y, dino_t=None, mask_dino_to_latent: bool = False):
         """
         x: (N, C, H, W)
         t: (N,)
         y: (N,)
         """
+        del mask_dino_to_latent
         del dino_t
         # class and time embeddings
         t_emb = self.t_embedder(t)
@@ -826,7 +838,7 @@ class JiTDualStream(nn.Module):
         dino_context = base_tokens + self.dino_in_context_posemb
         return latent_context, dino_context
 
-    def forward(self, latent, dino_features, t, y, dino_t=None):
+    def forward(self, latent, dino_features, t, y, dino_t=None, mask_dino_to_latent: bool = False):
         if dino_t is None:
             dino_t = t
         t_emb = self.t_embedder(t)
@@ -875,6 +887,7 @@ class JiTDualStream(nn.Module):
                     latent_num_patches=num_patches,
                     dino_num_patches=num_patches,
                     dino_c=dino_c,
+                    mask_dino_to_latent=mask_dino_to_latent,
                 )
 
         prefix_len = self.in_context_len if context_inserted else 0
