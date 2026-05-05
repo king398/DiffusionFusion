@@ -7,7 +7,7 @@
 #SBATCH --cpus-per-task=16
 #SBATCH --gpus-per-node=4
 #SBATCH --mem=256G
-#SBATCH --time=26:00:00
+#SBATCH --time=48:00:00
 #SBATCH -o slurm-%j.out
 #SBATCH -e slurm-%j.err
 #SBATCH --mail-user=mithils3@illinois.edu
@@ -36,78 +36,15 @@ export TORCH_NCCL_ASYNC_ERROR_HANDLING="${TORCH_NCCL_ASYNC_ERROR_HANDLING:-1}"
 export TORCH_NCCL_ENABLE_MONITORING="${TORCH_NCCL_ENABLE_MONITORING:-1}"
 export TORCH_NCCL_HEARTBEAT_TIMEOUT_SEC="${TORCH_NCCL_HEARTBEAT_TIMEOUT_SEC:-1200}"
 
-echo "===== Slurm/CUDA preflight ====="
-echo "date=$(date)"
-echo "host=$(hostname)"
-echo "job_id=${SLURM_JOB_ID:-unset}"
-echo "node_list=${SLURM_JOB_NODELIST:-unset}"
-echo "slurm_gpus_on_node=${SLURM_GPUS_ON_NODE:-unset}"
-echo "cuda_visible_devices=${CUDA_VISIBLE_DEVICES:-unset}"
-echo "expected_gpus=${EXPECTED_GPUS}"
-echo "nproc_per_node=${NPROC_PER_NODE}"
-echo "cuda_module=${CUDA_MODULE}"
-echo "nccl_debug=${NCCL_DEBUG}"
-echo "nccl_debug_subsys=${NCCL_DEBUG_SUBSYS}"
-echo "nccl_net_plugin=${NCCL_NET_PLUGIN}"
-echo "python=$(which python)"
-echo "torchrun=$(which torchrun)"
-module list
-nvidia-smi
-
-python - <<'PY'
-import os
-import sys
-import torch
-
-print(f"PyTorch {torch.__version__}, built for CUDA {torch.version.cuda}")
-try:
-    print(f"PyTorch NCCL version={torch.cuda.nccl.version()}")
-except Exception as exc:
-    print(f"PyTorch NCCL version unavailable: {type(exc).__name__}: {exc}")
-print(f"CUDA_VISIBLE_DEVICES={os.environ.get('CUDA_VISIBLE_DEVICES', 'unset')}")
-for name in (
-    "NCCL_DEBUG",
-    "NCCL_DEBUG_SUBSYS",
-    "NCCL_NET_PLUGIN",
-    "TORCH_NCCL_ASYNC_ERROR_HANDLING",
-):
-    print(f"{name}={os.environ.get(name, 'unset')}")
-try:
-    available = torch.cuda.is_available()
-    device_count = torch.cuda.device_count()
-except Exception as exc:
-    sys.exit(f"CUDA preflight failed before torchrun: {type(exc).__name__}: {exc}")
-
-print(f"torch.cuda.is_available()={available}")
-print(f"torch.cuda.device_count()={device_count}")
-if device_count < 1:
-    sys.exit("CUDA preflight failed before torchrun: no CUDA devices are visible to PyTorch")
-expected_gpus = int(os.environ.get("EXPECTED_GPUS", "1"))
-nproc_per_node = int(os.environ.get("NPROC_PER_NODE", str(expected_gpus)))
-if device_count < expected_gpus:
-    sys.exit(
-        "CUDA preflight failed before torchrun: "
-        f"expected {expected_gpus} visible GPU(s), got {device_count}. "
-        "Check #SBATCH --gpus-per-node / account allocation, or submit with EXPECTED_GPUS=1 for a single-GPU debug run."
-    )
-if nproc_per_node > device_count:
-    sys.exit(
-        "CUDA preflight failed before torchrun: "
-        f"NPROC_PER_NODE={nproc_per_node} but only {device_count} CUDA device(s) are visible."
-    )
-for idx in range(device_count):
-    print(f"cuda:{idx}={torch.cuda.get_device_name(idx)}")
-PY
-echo "===== End preflight ====="
 
 
 IMAGENET_PATH="/work/hdd/bgnp/msalunkhe/data/imagenet/"
-OUTPUT_DIR="/work/nvme/bgnp/msalunkhe/outputs/jit_dual_struct_cfg_mask_80ep"
+OUTPUT_DIR="/work/nvme/bgnp/msalunkhe/outputs/jit_dual_struct_cfg_mask_200ep"
 WANDB_RUN_NAME="${WANDB_RUN_NAME:-jit_dual_struct_cfg_mask_80ep}"
 FID_STATS_PATH="${FID_STATS_PATH:-/u/msalunkhe/DiffusionFusion/JiT/fid_stats/jit_in256_stats.npz}"
 NUM_IMAGES="${NUM_IMAGES:-10000}"
-EVAL_FREQ="${EVAL_FREQ:-20}"
-EPOCHS="${EPOCHS:-80}"
+EVAL_FREQ="${EVAL_FREQ:-40}"
+EPOCHS="${EPOCHS:-200}"
 LR_SCHEDULE="${LR_SCHEDULE:-constant}"
 DINO_TIME_SHIFT="${DINO_TIME_SHIFT:-0.0}"
 BATCH_SIZE="${BATCH_SIZE:-128}"
