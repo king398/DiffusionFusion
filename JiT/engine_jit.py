@@ -3,6 +3,8 @@ import sys
 import os
 import shutil
 import time
+from contextlib import contextmanager
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from itertools import islice
 
 import torch
@@ -11,7 +13,6 @@ import numpy as np
 import JiT.util.misc as misc
 import JiT.util.lr_sched as lr_sched
 from JiT.eval.diffusion_decoder import decode_with_decoder
-import copy
 from PIL import Image
 try:
     import wandb
@@ -21,6 +22,131 @@ try:
     import torch_fidelity
 except ImportError:
     torch_fidelity = None
+
+
+class _DeviceBatchPrefetcher:
+    """Move the next CPU batch to the training device on a side CUDA stream."""
+
+    def __init__(self, data_loader, device, enabled: bool = True):
+        self._iterator = iter(data_loader)
+        self._use_cuda = (
+            enabled
+            and device.type == "cuda"
+            and torch.cuda.is_available()
+        )
+        if self._use_cuda:
+            device_index = (
+                device.index if device.index is not None else torch.cuda.current_device()
+            )
+            self._device = torch.device("cuda", device_index)
+        else:
+            self._device = device
+        self._stream = torch.cuda.Stream(device=self._device) if self._use_cuda else None
+        self._executor = (
+            ThreadPoolExecutor(max_workers=1, thread_name_prefix="jit-cuda-prefetch")
+            if self._use_cuda
+            else None
+        )
+        self._next_batch = None
+        self._next_future = None
+        self._preload()
+
+    def _move_batch(self, batch):
+        non_blocking = self._use_cuda
+        return (
+            batch["latent"].to(self._device, non_blocking=non_blocking),
+            batch["dino"].to(self._device, non_blocking=non_blocking),
+            batch["y"].to(self._device, non_blocking=non_blocking).view(-1).long(),
+        )
+
+    def _load_next_batch(self):
+        batch = next(self._iterator)
+        if self._use_cuda:
+            torch.cuda.set_device(self._device)
+            with torch.cuda.stream(self._stream):
+                return self._move_batch(batch)
+        return self._move_batch(batch)
+
+    def _preload(self):
+        if self._executor is not None:
+            self._next_future = self._executor.submit(self._load_next_batch)
+            return
+        try:
+            self._next_batch = self._load_next_batch()
+        except StopIteration:
+            self._next_batch = None
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        if self._executor is not None:
+            if self._next_future is None:
+                raise StopIteration
+            try:
+                batch = self._next_future.result()
+            except StopIteration:
+                self._next_future = None
+                raise
+            current_stream = torch.cuda.current_stream(self._device)
+            current_stream.wait_stream(self._stream)
+            for tensor in batch:
+                tensor.record_stream(current_stream)
+            self._preload()
+            return batch
+
+        if self._next_batch is None:
+            raise StopIteration
+
+        batch = self._next_batch
+        self._preload()
+        return batch
+
+    def close(self):
+        if self._next_future is not None:
+            self._next_future.cancel()
+            self._next_future = None
+        if self._executor is not None:
+            self._executor.shutdown(wait=True, cancel_futures=True)
+            self._executor = None
+
+
+def _all_reduce_loss_tensor(loss: torch.Tensor) -> float:
+    reduced = loss.detach()
+    if misc.get_world_size() > 1:
+        reduced = reduced.clone()
+        torch.distributed.all_reduce(reduced)
+        reduced /= misc.get_world_size()
+    return float(reduced.item())
+
+
+@contextmanager
+def _swap_ema_parameters(model_without_ddp, ema_params):
+    params = list(model_without_ddp.parameters())
+    if len(params) != len(ema_params):
+        raise ValueError(
+            f"EMA parameter count mismatch: model has {len(params)} parameters, "
+            f"EMA has {len(ema_params)}."
+        )
+    for param, ema_param in zip(params, ema_params):
+        param.data, ema_param.data = ema_param.data, param.data
+    try:
+        yield
+    finally:
+        for param, ema_param in zip(params, ema_params):
+            param.data, ema_param.data = ema_param.data, param.data
+
+
+def _save_png(path: str, image: np.ndarray) -> None:
+    Image.fromarray(image).save(path, format="PNG", compress_level=0)
+
+
+def _drain_save_futures(futures, *, limit: int | None = None) -> None:
+    while futures and (limit is None or len(futures) >= limit):
+        done, _pending = wait(futures, return_when=FIRST_COMPLETED)
+        for future in done:
+            future.result()
+            futures.remove(future)
 
 
 def _iter_accumulation_groups(iterable, accum_iter: int, total_micro_batches: int):
@@ -54,6 +180,8 @@ def train_one_epoch(
     header = 'Epoch: [{}]'.format(epoch)
     print_freq = 20
     accum_iter = max(1, int(getattr(args, "accum_iter", 1)))
+    log_freq = max(1, int(getattr(args, "log_freq", 1)))
+    cuda_prefetch = bool(getattr(args, "cuda_prefetch", True))
     steps_per_epoch = steps_per_epoch or len(data_loader)
     optimizer_steps_per_epoch = optimizer_steps_per_epoch or math.ceil(
         steps_per_epoch / accum_iter
@@ -64,71 +192,95 @@ def train_one_epoch(
     if log_writer is not None:
         print('log_dir: {}'.format(log_writer.log_dir))
 
-    for optimizer_step, (micro_batches, micro_batches_in_update) in enumerate(
-        metric_logger.log_every(
-            _iter_accumulation_groups(data_loader, accum_iter, steps_per_epoch),
-            print_freq,
-            header,
-            optimizer_steps_per_epoch,
-        )
-    ):
-        # Per optimizer step (instead of per micro-batch) lr scheduler so accumulation
-        # matches the reference large-batch JiT training recipe.
-        lr = lr_sched.adjust_learning_rate(
-            optimizer,
-            optimizer_step / optimizer_steps_per_epoch + epoch,
-            args,
-        )
-        accum_loss = 0.0
+    device_batches = _DeviceBatchPrefetcher(
+        data_loader,
+        device,
+        enabled=cuda_prefetch,
+    )
+    consumed_micro_batches = 0
 
-        for batch in micro_batches:
-            # normalize image to [-1, 1]
-            latent = batch["latent"].to(device, non_blocking=True)
-            dino = batch["dino"].to(device, non_blocking=True)
-            labels = batch["y"].to(device, non_blocking=True).view(-1).long()
-            with torch.autocast('cuda', dtype=torch.bfloat16):
-                loss = model(latent, dino, labels)
-
-            loss_value = loss.item()
-            if not math.isfinite(loss_value):
-                print("Loss is {}, stopping training".format(loss_value))
-                sys.exit(1)
-
-            accum_loss += loss_value
-            (loss / micro_batches_in_update).backward()
-
-        optimizer.step()
-        optimizer.zero_grad(set_to_none=True)
-        model_without_ddp.update_ema()
-
-        step_loss = accum_loss / micro_batches_in_update
-        metric_logger.update(loss=step_loss)
-        metric_logger.update(lr=lr)
-
-        loss_value_reduce = misc.all_reduce_mean(step_loss)
-        completed_optimizer_steps = optimizer_step + 1
-
-        if log_writer is not None:
-            # Use epoch_1000x as the x-axis in TensorBoard to calibrate curves.
-            epoch_1000x = int(
-                (epoch + completed_optimizer_steps / optimizer_steps_per_epoch) * 1000
+    try:
+        for optimizer_step, _ in enumerate(
+            metric_logger.log_every(
+                range(optimizer_steps_per_epoch),
+                print_freq,
+                header,
+                optimizer_steps_per_epoch,
             )
-            if optimizer_step % args.log_freq == 0:
-                log_writer.add_scalar(
-                    'train_loss', loss_value_reduce, epoch_1000x)
-                log_writer.add_scalar('lr', lr, epoch_1000x)
-        if wandb_run is not None and optimizer_step % args.log_freq == 0:
-            global_step = epoch * optimizer_steps_per_epoch + optimizer_step
-            payload = {
-                "train/loss": loss_value_reduce,
-                "train/lr": lr,
-                "train/epoch_progress": epoch + completed_optimizer_steps / optimizer_steps_per_epoch,
-            }
-            misc.add_wandb_global_step(payload, global_step)
-            wandb_run.log(payload)
+        ):
+            # Per optimizer step (instead of per micro-batch) lr scheduler so accumulation
+            # matches the reference large-batch JiT training recipe.
+            lr = lr_sched.adjust_learning_rate(
+                optimizer,
+                optimizer_step / optimizer_steps_per_epoch + epoch,
+                args,
+            )
+            remaining_micro_batches = steps_per_epoch - consumed_micro_batches
+            micro_batches_in_update = min(accum_iter, remaining_micro_batches)
+            if micro_batches_in_update <= 0:
+                break
+            accum_loss = torch.zeros((), device=device)
+            prefetch_wait = 0.0
+
+            for _micro_batch_idx in range(micro_batches_in_update):
+                fetch_start = time.time()
+                latent, dino, labels = next(device_batches)
+                prefetch_wait += time.time() - fetch_start
+                with torch.autocast('cuda', dtype=torch.bfloat16):
+                    loss = model(latent, dino, labels)
+
+                accum_loss = accum_loss + loss.detach()
+                (loss / micro_batches_in_update).backward()
+                consumed_micro_batches += 1
+
+            optimizer.step()
+            optimizer.zero_grad(set_to_none=True)
+            model_without_ddp.update_ema()
+
+            metric_logger.update(lr=lr)
+            completed_optimizer_steps = optimizer_step + 1
+            should_measure_loss = (
+                optimizer_step % log_freq == 0
+                or optimizer_step % print_freq == 0
+                or completed_optimizer_steps == optimizer_steps_per_epoch
+            )
+
+            if should_measure_loss:
+                step_loss_tensor = accum_loss / micro_batches_in_update
+                loss_value_reduce = _all_reduce_loss_tensor(step_loss_tensor)
+                if not math.isfinite(loss_value_reduce):
+                    print("Loss is {}, stopping training".format(loss_value_reduce))
+                    sys.exit(1)
+
+                metric_logger.update(loss=loss_value_reduce)
+                metric_logger.update(prefetch=prefetch_wait)
+            else:
+                loss_value_reduce = None
+
+            if log_writer is not None:
+                # Use epoch_1000x as the x-axis in TensorBoard to calibrate curves.
+                epoch_1000x = int(
+                    (epoch + completed_optimizer_steps / optimizer_steps_per_epoch) * 1000
+                )
+                if loss_value_reduce is not None and optimizer_step % log_freq == 0:
+                    log_writer.add_scalar(
+                        'train_loss', loss_value_reduce, epoch_1000x)
+                    log_writer.add_scalar('lr', lr, epoch_1000x)
+            if wandb_run is not None and loss_value_reduce is not None and optimizer_step % log_freq == 0:
+                global_step = epoch * optimizer_steps_per_epoch + optimizer_step
+                payload = {
+                    "train/loss": loss_value_reduce,
+                    "train/lr": lr,
+                    "train/epoch_progress": epoch + completed_optimizer_steps / optimizer_steps_per_epoch,
+                }
+                misc.add_wandb_global_step(payload, global_step)
+                wandb_run.log(payload)
+    finally:
+        device_batches.close()
     print(f"Finished ")
 
 
+@torch.inference_mode()
 def evaluate(model_without_ddp, args, epoch, decoder, batch_size=64, log_writer=None, wandb_run=None, wandb_step=None):
     print("Start evaluation at epoch {}".format(epoch))
     model_without_ddp.eval()
@@ -159,61 +311,76 @@ def evaluate(model_without_ddp, args, epoch, decoder, batch_size=64, log_writer=
     print("Save to:", save_folder)
     if misc.get_rank() == 0 and not os.path.exists(save_folder):
         os.makedirs(save_folder)
+    misc.distributed_barrier()
 
     # switch to ema params, hard-coded to be the first one
-    model_state_dict = copy.deepcopy(model_without_ddp.state_dict())
-    ema_state_dict = copy.deepcopy(model_without_ddp.state_dict())
-    for i, (name, _value) in enumerate(model_without_ddp.named_parameters()):
-        assert name in ema_state_dict
-        ema_state_dict[name] = model_without_ddp.ema_params1[i]
     print("Switch to ema")
-    model_without_ddp.load_state_dict(ema_state_dict)
-
     class_num = args.class_num
     class_label_gen_world = np.arange(
         0, class_num, dtype=np.int64).repeat(math.ceil(args.num_images / class_num))[:args.num_images]
 
-    for step_idx in range(num_steps):
-        print("Generation step {}/{}".format(step_idx, num_steps))
+    save_workers = max(0, int(getattr(args, "eval_save_workers", 4)))
+    max_pending_saves = max(1, save_workers * 8)
+    save_executor = (
+        ThreadPoolExecutor(
+            max_workers=save_workers,
+            thread_name_prefix=f"jit-eval-save-r{local_rank}",
+        )
+        if save_workers > 0
+        else None
+    )
+    save_futures = []
+    try:
+        with _swap_ema_parameters(model_without_ddp, model_without_ddp.ema_params1):
+            for step_idx in range(num_steps):
+                print("Generation step {}/{}".format(step_idx, num_steps))
 
-        start_idx = world_size * batch_size * step_idx + local_rank * batch_size
-        end_idx = start_idx + batch_size
-        labels_gen_np = class_label_gen_world[start_idx:min(end_idx, args.num_images)].copy()
-        labels_gen = np.zeros(batch_size, dtype=np.int64)
-        labels_gen[:labels_gen_np.shape[0]] = labels_gen_np
-        labels_gen = torch.from_numpy(labels_gen).long().cuda()
+                start_idx = world_size * batch_size * step_idx + local_rank * batch_size
+                end_idx = start_idx + batch_size
+                labels_gen_np = class_label_gen_world[start_idx:min(end_idx, args.num_images)].copy()
+                labels_gen = np.zeros(batch_size, dtype=np.int64)
+                labels_gen[:labels_gen_np.shape[0]] = labels_gen_np
+                labels_gen = torch.from_numpy(labels_gen).long().cuda()
 
-        with torch.amp.autocast('cuda', dtype=torch.bfloat16):
-            sampled_latents, sampled_dino = model_without_ddp.generate(
-                labels_gen)
+                with torch.amp.autocast('cuda', dtype=torch.bfloat16):
+                    sampled_latents, sampled_dino = model_without_ddp.generate(
+                        labels_gen)
 
-        misc.distributed_barrier()
+                print("Decoding step {}/{}".format(step_idx, num_steps))
+                sampled_images = decode_with_decoder(decoder, sampled_latents, sampled_dino)
+                for sample_idx, sample in enumerate(sampled_images):
+                    index = sample_idx + world_size * batch_size * \
+                        step_idx + local_rank * batch_size
+                    if index >= args.num_images:
+                        continue
 
-        print("Decoding step {}/{}".format(step_idx, num_steps))
-        sampled_images = decode_with_decoder(decoder, sampled_latents, sampled_dino)
-        for sample_idx, sample in enumerate(sampled_images):
-            index = sample_idx + world_size * batch_size * \
-                step_idx + local_rank * batch_size
-            if index >= args.num_images:
-                continue
-
-            Image.fromarray(sample).save(os.path.join(save_folder, '{}.png'.format(
-                str(index).zfill(5))))
-            if wandb_table is not None and index % eval_image_interval == 0:
-                class_id = int(labels_gen_np[sample_idx])
-                wandb_table.add_data(
-                    epoch,
-                    index,
-                    class_id,
-                    wandb.Image(
-                        sample, caption=f"class={class_id}, idx={index}")
-                )
+                    image_path = os.path.join(save_folder, '{}.png'.format(
+                        str(index).zfill(5)))
+                    if save_executor is None:
+                        _save_png(image_path, sample)
+                    else:
+                        save_futures.append(
+                            save_executor.submit(_save_png, image_path, sample.copy())
+                        )
+                        _drain_save_futures(save_futures, limit=max_pending_saves)
+                    if wandb_table is not None and index % eval_image_interval == 0:
+                        class_id = int(labels_gen_np[sample_idx])
+                        wandb_table.add_data(
+                            epoch,
+                            index,
+                            class_id,
+                            wandb.Image(
+                                sample, caption=f"class={class_id}, idx={index}")
+                        )
+    finally:
+        _drain_save_futures(save_futures)
+        if save_executor is not None:
+            save_executor.shutdown(wait=True)
 
     misc.distributed_barrier()
 
     # back to no ema
     print("Switch back from ema")
-    model_without_ddp.load_state_dict(model_state_dict)
 
     # compute FID and IS on rank 0, while other ranks wait outside NCCL collectives
     metrics_requested = bool(getattr(args, "output_dir", None)) or bool(

@@ -19,7 +19,6 @@ from JiT.util.dataset import (
     RamLoadedShardDataset,
     inspect_feature_shards,
 )
-import copy
 from JiT.engine_jit import train_one_epoch, evaluate
 from JiT.denoiser import Denoiser
 from JiT.eval.diffusion_decoder import load_decoder_for_eval
@@ -117,6 +116,10 @@ def get_args_parser():
         parser, 'ram_shard_prefetch', True,
         help='While one RAM-loaded shard is training, preload the next shard in a background thread',
     )
+    add_bool_arg(
+        parser, 'cuda_prefetch', True,
+        help='Prefetch the next training batch to CUDA on a side stream',
+    )
     parser.add_argument('--ddp_bucket_cap_mb', default=100, type=int,
                         help='DDP gradient bucket size in MB')
     add_bool_arg(
@@ -191,6 +194,8 @@ def get_args_parser():
                         help='Weights & Biases mode')
     parser.add_argument('--wandb_eval_image_interval', type=int, default=10,
                         help='Log one generated eval image to W&B every N images')
+    parser.add_argument('--eval_save_workers', type=int, default=4,
+                        help='Background workers per rank for saving online-eval PNGs')
     parser.add_argument('--device', default='cuda',
                         help='Device to use for training/testing')
 
@@ -325,8 +330,12 @@ def resume_or_init_ema(args, model_without_ddp, optimizer, device):
             print("Loaded optimizer state")
         return
 
-    model_without_ddp.ema_params1 = copy.deepcopy(list(model_without_ddp.parameters()))
-    model_without_ddp.ema_params2 = copy.deepcopy(list(model_without_ddp.parameters()))
+    model_without_ddp.ema_params1 = [
+        param.detach().clone() for param in model_without_ddp.parameters()
+    ]
+    model_without_ddp.ema_params2 = [
+        param.detach().clone() for param in model_without_ddp.parameters()
+    ]
     print("Training from scratch")
 
 

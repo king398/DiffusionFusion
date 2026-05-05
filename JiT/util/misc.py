@@ -5,7 +5,6 @@ import os
 import time
 from collections import defaultdict, deque
 from pathlib import Path
-import copy
 
 import torch
 import torch.distributed as dist
@@ -305,20 +304,25 @@ def save_model(args, model_without_ddp, optimizer, epoch, epoch_name=None):
     output_dir = Path(args.output_dir)
     checkpoint_path = output_dir / ('checkpoint-%s.pth' % epoch_name)
 
+    model_state = model_without_ddp.state_dict()
     to_save = {
-        'model': model_without_ddp.state_dict(),
+        'model': model_state,
         'optimizer': optimizer.state_dict(),
         'epoch': epoch,
         'args': args,
     }
 
-    # ema
-    ema_state_dict1 = copy.deepcopy(model_without_ddp.state_dict())
-    ema_state_dict2 = copy.deepcopy(model_without_ddp.state_dict())
-    for i, (name, _value) in enumerate(model_without_ddp.named_parameters()):
-        assert name in ema_state_dict1 and name in ema_state_dict2
-        ema_state_dict1[name] = model_without_ddp.ema_params1[i]
-        ema_state_dict2[name] = model_without_ddp.ema_params2[i]
+    param_names = [name for name, _value in model_without_ddp.named_parameters()]
+    ema_params1 = dict(zip(param_names, model_without_ddp.ema_params1))
+    ema_params2 = dict(zip(param_names, model_without_ddp.ema_params2))
+    ema_state_dict1 = {
+        name: ema_params1.get(name, value).detach()
+        for name, value in model_state.items()
+    }
+    ema_state_dict2 = {
+        name: ema_params2.get(name, value).detach()
+        for name, value in model_state.items()
+    }
     to_save['model_ema1'] = ema_state_dict1
     to_save['model_ema2'] = ema_state_dict2
 

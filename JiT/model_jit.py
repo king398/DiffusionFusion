@@ -77,7 +77,7 @@ class TimestepEmbedder(nn.Module):
     Embeds scalar timesteps into vector representations.
     """
 
-    def __init__(self, hidden_size, frequency_embedding_size=256):
+    def __init__(self, hidden_size, frequency_embedding_size=256, max_period=10000):
         super().__init__()
         self.mlp = nn.Sequential(
             nn.Linear(frequency_embedding_size, hidden_size, bias=True),
@@ -85,6 +85,12 @@ class TimestepEmbedder(nn.Module):
             nn.Linear(hidden_size, hidden_size, bias=True),
         )
         self.frequency_embedding_size = frequency_embedding_size
+        self.max_period = max_period
+        half = frequency_embedding_size // 2
+        freqs = torch.exp(
+            -math.log(max_period) * torch.arange(start=0, end=half, dtype=torch.float32) / half
+        )
+        self.register_buffer("freqs", freqs, persistent=False)
 
     @staticmethod
     def timestep_embedding(t, dim, max_period=10000):
@@ -110,7 +116,11 @@ class TimestepEmbedder(nn.Module):
         return embedding
 
     def forward(self, t):
-        t_freq = self.timestep_embedding(t, self.frequency_embedding_size)
+        args = t[:, None].float() * self.freqs[None]
+        t_freq = torch.cat([torch.cos(args), torch.sin(args)], dim=-1)
+        if self.frequency_embedding_size % 2:
+            t_freq = torch.cat(
+                [t_freq, torch.zeros_like(t_freq[:, :1])], dim=-1)
         t_emb = self.mlp(t_freq)
         return t_emb
 

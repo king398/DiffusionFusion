@@ -59,9 +59,17 @@ class Denoiser(nn.Module):
         return labels_dropped
 
     def drop_labels_for_cfg(self, labels: torch.Tensor) -> tuple[torch.Tensor, bool]:
-        drop = torch.rand((), device=labels.device) < self.label_drop_prob
-        out = torch.where(drop, torch.full_like(labels, self.num_classes), labels)
-        return out, bool(drop.item())
+        if self.label_drop_prob <= 0.0:
+            return labels, False
+        if self.label_drop_prob >= 1.0:
+            return torch.full_like(labels, self.num_classes), True
+
+        # The structural mask is a Python branch, so sample it on CPU to avoid a
+        # CUDA scalar sync on every training microbatch.
+        drop = bool(torch.rand(()).item() < self.label_drop_prob)
+        if not drop:
+            return labels, False
+        return torch.full_like(labels, self.num_classes), True
 
     def sample_t(self, n: int, device: torch.device | None = None) -> torch.Tensor:
         z = torch.randn(n, device=device) * self.P_std + self.P_mean
@@ -281,6 +289,10 @@ class Denoiser(nn.Module):
     @torch.no_grad()
     def update_ema(self) -> None:
         assert self.ema_params1 is not None and self.ema_params2 is not None
-        for targ1, targ2, src in zip(self.ema_params1, self.ema_params2, self.parameters()):
-            targ1.detach().mul_(self.ema_decay1).add_(src, alpha=1 - self.ema_decay1)
-            targ2.detach().mul_(self.ema_decay2).add_(src, alpha=1 - self.ema_decay2)
+        params = [param.detach() for param in self.parameters()]
+        ema_params1 = [param.detach() for param in self.ema_params1]
+        ema_params2 = [param.detach() for param in self.ema_params2]
+        torch._foreach_mul_(ema_params1, self.ema_decay1)
+        torch._foreach_add_(ema_params1, params, alpha=1 - self.ema_decay1)
+        torch._foreach_mul_(ema_params2, self.ema_decay2)
+        torch._foreach_add_(ema_params2, params, alpha=1 - self.ema_decay2)
