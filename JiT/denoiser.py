@@ -58,6 +58,7 @@ class Denoiser(nn.Module):
         labels_dropped, _ = self.drop_labels_for_cfg(labels)
         return labels_dropped
 
+    @torch.compiler.disable
     def drop_labels_for_cfg(self, labels: torch.Tensor) -> tuple[torch.Tensor, bool]:
         if self.label_drop_prob <= 0.0:
             return labels, False

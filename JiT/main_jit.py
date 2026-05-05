@@ -138,6 +138,10 @@ def get_args_parser():
         parser, 'ddp_find_unused_parameters', False,
         help='Enable DDP unused-parameter detection for dynamic structural masks',
     )
+    add_bool_arg(
+        parser, 'compile_model', True,
+        help='Compile the DDP training model with torch.compile',
+    )
 
     # sampling
     parser.add_argument('--sampling_method', default='heun', type=str,
@@ -422,7 +426,9 @@ def main(args):
 
     # Compile the full DDP model for training only;
     # eval uses model_without_ddp (uncompiled) to avoid dynamic-shape issues.
-    compiled_model = torch.compile(model)
+    compiled_model = torch.compile(model) if args.compile_model else model
+    if global_rank == 0 and not args.compile_model:
+        print("torch.compile disabled; training with eager DDP model.")
 
     # Set up optimizer with weight decay adjustment for bias and norm layers
     param_groups = misc.add_weight_decay(model_without_ddp, args.weight_decay)

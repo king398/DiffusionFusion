@@ -36,6 +36,17 @@ export TORCH_NCCL_ASYNC_ERROR_HANDLING="${TORCH_NCCL_ASYNC_ERROR_HANDLING:-1}"
 export TORCH_NCCL_ENABLE_MONITORING="${TORCH_NCCL_ENABLE_MONITORING:-1}"
 export TORCH_NCCL_HEARTBEAT_TIMEOUT_SEC="${TORCH_NCCL_HEARTBEAT_TIMEOUT_SEC:-1200}"
 
+if [[ -z "${CXX:-}" || "${CXX}" == "CC" ]]; then
+  if command -v g++ >/dev/null 2>&1; then
+    export CXX="$(command -v g++)"
+  elif command -v c++ >/dev/null 2>&1; then
+    export CXX="$(command -v c++)"
+  fi
+fi
+if [[ -n "${CXX:-}" ]]; then
+  export TORCHINDUCTOR_CXX="${TORCHINDUCTOR_CXX:-${CXX}}"
+fi
+
 
 
 IMAGENET_PATH="/work/hdd/bgnp/msalunkhe/data/imagenet/"
@@ -50,6 +61,10 @@ DINO_TIME_SHIFT="${DINO_TIME_SHIFT:-0.0}"
 BATCH_SIZE="${BATCH_SIZE:-128}"
 ACCUM_ITER="${ACCUM_ITER:-2}"
 mkdir -p "${OUTPUT_DIR}"
+COMPILE_ARGS=()
+if [[ "${JIT_COMPILE:-1}" == "0" || "${JIT_COMPILE:-1}" == "false" ]]; then
+  COMPILE_ARGS+=(--no_compile_model)
+fi
 OMP_NUM_THREADS=16 torchrun \
 --nproc_per_node="${NPROC_PER_NODE}" \
 --nnodes=1 \
@@ -82,4 +97,5 @@ main_jit.py \
 --decoder_checkpoint /work/nvme/bgnp/msalunkhe/outputs/jit_decoder_small_gan_lower_noise/checkpoint-last.pth \
 --decoder_checkpoint_key model_ema \
 --class_num 1000 \
---eval_freq "${EVAL_FREQ}"
+--eval_freq "${EVAL_FREQ}" \
+"${COMPILE_ARGS[@]}"
