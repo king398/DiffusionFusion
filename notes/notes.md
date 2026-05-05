@@ -19,7 +19,7 @@ This repo already has a latent+DINO dual noising system, so the plan is not a gr
 - LR: `blr=5e-5`, expected actual LR `2e-4`
 - Sampling/eval: Heun, 50 steps, CFG `2.9`, interval `[0.1, 1.0]`
 - Current architecture: separate latent and DINO towers, in-context tokens at block 0, bidirectional cross-fusion at blocks 4 and 8.
-- Current noising: latent time `t = sigmoid(N(P_mean=-0.8, P_std=0.8))`; DINO time is shifted by `log(sqrt(dino_dim / latent_dim))`.
+- Current noising: latent time `t = sigmoid(N(P_mean=-0.8, P_std=0.8))`; DINO time is synchronized with latent time by default.
 - Current loss: equal latent velocity MSE and DINO velocity MSE by default.
 - Current CFG: unconditional pass replaces class label with the null class, but still passes the same noised DINO stream through the model.
 
@@ -148,7 +148,7 @@ Expected result: lower DINO weights may improve image latent quality and guided 
 
 V-Co's calibration result is very relevant. They show that pixels and DINO features need matched signal magnitude, otherwise the same timestep creates mismatched SNR.
 
-Current repo uses a dimension-ratio DINO time shift:
+The failed default-shift run used a dimension-ratio DINO time shift:
 
 `alpha = sqrt(dino_dim / latent_dim)`
 
@@ -177,7 +177,7 @@ Compute:
 
 Compare:
 
-- Current dimension-based DINO time shift.
+- No DINO time shift.
 - No DINO time shift, but DINO features scaled by `alpha_rms`.
 - DINO time shift derived from empirical RMS instead of dimension ratio.
 - Combined latent+DINO effective shift only if the above two do not help.
