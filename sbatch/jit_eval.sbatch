@@ -5,7 +5,7 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=16
-#SBATCH --gpus-per-node=4
+#SBATCH --gpus-per-node=2
 #SBATCH --mem=256G
 #SBATCH --time=4:00:00
 #SBATCH -o slurm-%j.out
@@ -14,30 +14,32 @@
 
 set -euo pipefail
 
-# Requires a checkpoint saved after the native velocity-prediction migration.
-
 module load python/3.11.9
-module load cuda/12.9.0
+module load cuda/13.1.1
 
 source /u/msalunkhe/.venv/bin/activate
 cd /u/msalunkhe/DiffusionFusion/JiT
-git pull
+
+export CUDA_DEVICE_ORDER=PCI_BUS_ID
+export PYTHONFAULTHANDLER=1
+export NCCL_NET_PLUGIN="${NCCL_NET_PLUGIN_OVERRIDE:-none}"
 
 IMAGENET_PATH="${IMAGENET_PATH:-/work/hdd/bgnp/msalunkhe/data/imagenet/}"
-TRAIN_OUTPUT_DIR="${TRAIN_OUTPUT_DIR:-/work/nvme/bgnp/msalunkhe/outputs/jit_base_patch_size_2_cosine_80ep}"
+TRAIN_OUTPUT_DIR="${TRAIN_OUTPUT_DIR:-/work/nvme/bgnp/msalunkhe/outputs/jit_dual_struct_cfg_mask_80ep}"
 RESUME_DIR="${RESUME_DIR:-${TRAIN_OUTPUT_DIR}}"
 OUTPUT_DIR="${OUTPUT_DIR:-${TRAIN_OUTPUT_DIR}/eval}"
 DECODER_CHECKPOINT="${DECODER_CHECKPOINT:-/work/nvme/bgnp/msalunkhe/outputs/jit_decoder_small_gan_lower_noise/checkpoint-last.pth}"
 FID_STATS_PATH="${FID_STATS_PATH:-/u/msalunkhe/DiffusionFusion/JiT/fid_stats/jit_in256_stats.npz}"
+WANDB_MODE="${WANDB_MODE:-online}"
 
 MODEL="${MODEL:-JiT-Dual-B/2-4C-896}"
-BATCH_SIZE="${BATCH_SIZE:-128}"
 GEN_BSZ="${GEN_BSZ:-64}"
 NUM_IMAGES="${NUM_IMAGES:-50000}"
 CFG="${CFG:-2.9}"
 INTERVAL_MIN="${INTERVAL_MIN:-0.1}"
 INTERVAL_MAX="${INTERVAL_MAX:-1.0}"
 CLASS_NUM="${CLASS_NUM:-1000}"
+DINO_TIME_SHIFT="${DINO_TIME_SHIFT:-0.0}"
 
 if [[ ! -f "${RESUME_DIR}/checkpoint-last.pth" ]]; then
   echo "JiT checkpoint not found: ${RESUME_DIR}/checkpoint-last.pth" >&2
@@ -52,7 +54,7 @@ fi
 mkdir -p "${OUTPUT_DIR}"
 
 OMP_NUM_THREADS=16 torchrun \
-  --nproc_per_node=4 \
+  --nproc_per_node=2 \
   --nnodes=1 \
   --node_rank=0 \
   main_jit.py \
@@ -61,7 +63,7 @@ OMP_NUM_THREADS=16 torchrun \
   --P_mean -0.8 \
   --P_std 0.8 \
   --noise_scale 1.0 \
-  --batch_size "${BATCH_SIZE}" \
+  --dino_time_shift "${DINO_TIME_SHIFT}" \
   --gen_bsz "${GEN_BSZ}" \
   --num_images "${NUM_IMAGES}" \
   --cfg "${CFG}" \
@@ -74,4 +76,5 @@ OMP_NUM_THREADS=16 torchrun \
   --fid_stats_path "${FID_STATS_PATH}" \
   --decoder_checkpoint "${DECODER_CHECKPOINT}" \
   --decoder_checkpoint_key model_ema \
-  --class_num "${CLASS_NUM}"
+  --class_num "${CLASS_NUM}" \
+  --wandb_mode "${WANDB_MODE}"
