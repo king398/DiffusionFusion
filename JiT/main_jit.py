@@ -139,8 +139,14 @@ def get_args_parser():
         help='Enable DDP unused-parameter detection for dynamic structural masks',
     )
     add_bool_arg(
-        parser, 'compile_model', True,
+        parser, 'compile_model', False,
         help='Compile the DDP training model with torch.compile',
+    )
+    parser.add_argument(
+        '--startup_debug_steps',
+        default=1,
+        type=int,
+        help='Print per-rank phase timings for the first N optimizer steps of each epoch',
     )
 
     # sampling
@@ -415,7 +421,15 @@ def main(args):
 
     # Compile the full DDP model for training only;
     # eval uses model_without_ddp (uncompiled) to avoid dynamic-shape issues.
-    compiled_model = torch.compile(model) if args.compile_model else model
+    if args.compile_model:
+        if global_rank == 0:
+            print(
+                "torch.compile enabled; the first optimizer step may spend several "
+                "minutes compiling before normal training logs appear."
+            )
+        compiled_model = torch.compile(model)
+    else:
+        compiled_model = model
     if global_rank == 0 and not args.compile_model:
         print("torch.compile disabled; training with eager DDP model.")
 

@@ -62,7 +62,9 @@ BATCH_SIZE="${BATCH_SIZE:-128}"
 ACCUM_ITER="${ACCUM_ITER:-2}"
 mkdir -p "${OUTPUT_DIR}"
 COMPILE_ARGS=()
-if [[ "${JIT_COMPILE:-1}" == "0" || "${JIT_COMPILE:-1}" == "false" ]]; then
+if [[ "${JIT_COMPILE:-0}" == "1" || "${JIT_COMPILE:-0}" == "true" ]]; then
+  COMPILE_ARGS+=(--compile_model)
+else
   COMPILE_ARGS+=(--no_compile_model)
 fi
 OMP_NUM_THREADS=16 torchrun \
