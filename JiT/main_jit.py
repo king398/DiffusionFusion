@@ -142,12 +142,6 @@ def get_args_parser():
         parser, 'compile_model', False,
         help='Compile the DDP training model with torch.compile',
     )
-    parser.add_argument(
-        '--startup_debug_steps',
-        default=1,
-        type=int,
-        help='Print per-rank phase timings for the first N optimizer steps of each epoch',
-    )
 
     # sampling
     parser.add_argument('--sampling_method', default='heun', type=str,

@@ -120,11 +120,6 @@ def _all_reduce_loss_tensor(loss: torch.Tensor) -> float:
     return float(reduced.item())
 
 
-def _sync_if_cuda(device: torch.device) -> None:
-    if device.type == "cuda" and torch.cuda.is_available():
-        torch.cuda.synchronize(device)
-
-
 @contextmanager
 def _swap_ema_parameters(model_without_ddp, ema_params):
     params = list(model_without_ddp.parameters())
@@ -187,8 +182,6 @@ def train_one_epoch(
     accum_iter = max(1, int(getattr(args, "accum_iter", 1)))
     log_freq = max(1, int(getattr(args, "log_freq", 1)))
     cuda_prefetch = bool(getattr(args, "cuda_prefetch", True))
-    startup_debug_steps = max(0, int(getattr(args, "startup_debug_steps", 0)))
-    rank = misc.get_rank()
     steps_per_epoch = steps_per_epoch or len(data_loader)
     optimizer_steps_per_epoch = optimizer_steps_per_epoch or math.ceil(
         steps_per_epoch / accum_iter
@@ -204,12 +197,6 @@ def train_one_epoch(
         device,
         enabled=cuda_prefetch,
     )
-    if startup_debug_steps > 0:
-        print(
-            f"Rank {rank}: epoch {epoch} device prefetcher initialized "
-            f"(cuda_prefetch={cuda_prefetch}).",
-            force=True,
-        )
     consumed_micro_batches = 0
 
     try:
@@ -233,56 +220,19 @@ def train_one_epoch(
             if micro_batches_in_update <= 0:
                 break
             accum_loss = torch.zeros((), device=device)
-            prefetch_wait = 0.0
-            debug_step = optimizer_step < startup_debug_steps
-
-            def startup_log(message: str) -> None:
-                if debug_step:
-                    print(
-                        f"Rank {rank}: epoch {epoch} optimizer_step {optimizer_step}: {message}",
-                        force=True,
-                    )
 
             for _micro_batch_idx in range(micro_batches_in_update):
-                startup_log(f"fetching micro-batch {_micro_batch_idx}")
-                fetch_start = time.time()
                 latent, dino, labels = next(device_batches)
-                _sync_if_cuda(device)
-                fetch_elapsed = time.time() - fetch_start
-                prefetch_wait += fetch_elapsed
-                startup_log(
-                    f"fetched micro-batch {_micro_batch_idx} in {fetch_elapsed:.2f}s "
-                    f"latent={tuple(latent.shape)} dino={tuple(dino.shape)}"
-                )
-
-                forward_start = time.time()
-                startup_log(f"forward micro-batch {_micro_batch_idx}")
                 with torch.autocast('cuda', dtype=torch.bfloat16):
                     loss = model(latent, dino, labels)
-                _sync_if_cuda(device)
-                startup_log(
-                    f"forward micro-batch {_micro_batch_idx} finished in "
-                    f"{time.time() - forward_start:.2f}s"
-                )
 
                 accum_loss = accum_loss + loss.detach()
-                backward_start = time.time()
-                startup_log(f"backward micro-batch {_micro_batch_idx}")
                 (loss / micro_batches_in_update).backward()
-                _sync_if_cuda(device)
-                startup_log(
-                    f"backward micro-batch {_micro_batch_idx} finished in "
-                    f"{time.time() - backward_start:.2f}s"
-                )
                 consumed_micro_batches += 1
 
-            optimizer_start = time.time()
-            startup_log("optimizer step")
             optimizer.step()
             optimizer.zero_grad(set_to_none=True)
             model_without_ddp.update_ema()
-            _sync_if_cuda(device)
-            startup_log(f"optimizer step finished in {time.time() - optimizer_start:.2f}s")
 
             metric_logger.update(lr=lr)
             completed_optimizer_steps = optimizer_step + 1
@@ -294,16 +244,12 @@ def train_one_epoch(
 
             if should_measure_loss:
                 step_loss_tensor = accum_loss / micro_batches_in_update
-                reduce_start = time.time()
-                startup_log("reducing loss for logging")
                 loss_value_reduce = _all_reduce_loss_tensor(step_loss_tensor)
-                startup_log(f"loss reduce finished in {time.time() - reduce_start:.2f}s")
                 if not math.isfinite(loss_value_reduce):
                     print("Loss is {}, stopping training".format(loss_value_reduce))
                     sys.exit(1)
 
                 metric_logger.update(loss=loss_value_reduce)
-                metric_logger.update(prefetch=prefetch_wait)
             else:
                 loss_value_reduce = None
 
