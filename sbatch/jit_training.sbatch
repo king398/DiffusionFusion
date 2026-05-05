@@ -76,8 +76,6 @@ main_jit.py \
 --P_std 0.8 \
 --noise_scale 1.0 \
 --dino_time_shift "${DINO_TIME_SHIFT}" \
---no_ddp_static_graph \
---ddp_find_unused_parameters \
 --batch_size "${BATCH_SIZE}" \
 --accum_iter "${ACCUM_ITER}" \
 --blr 5e-5 \

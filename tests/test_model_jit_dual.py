@@ -77,7 +77,7 @@ class JiTDualStreamTests(unittest.TestCase):
 
         self.assertTrue(torch.equal(latent_out, latent))
         self.assertTrue(torch.equal(dino_out, dino + 20.0))
-        self.assertEqual(block.latent_from_dino.calls, 0)
+        self.assertEqual(block.latent_from_dino.calls, 1)
         self.assertEqual(block.dino_from_latent.calls, 1)
 
 

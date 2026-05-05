@@ -479,15 +479,16 @@ class CrossFusionBlock(nn.Module):
             dino_c = c
         latent_snapshot = latent
         dino_snapshot = dino
-        if not mask_dino_to_latent:
-            latent = self.latent_from_dino(
-                latent_snapshot,
-                dino_snapshot,
-                c,
-                feat_rope=feat_rope,
-                num_patches=latent_num_patches,
-                context_num_patches=dino_num_patches,
-            )
+        latent_fused = self.latent_from_dino(
+            latent_snapshot,
+            dino_snapshot,
+            c,
+            feat_rope=feat_rope,
+            num_patches=latent_num_patches,
+            context_num_patches=dino_num_patches,
+        )
+        dino_to_latent_gate = 0.0 if mask_dino_to_latent else 1.0
+        latent = latent_snapshot + dino_to_latent_gate * (latent_fused - latent_snapshot)
         dino = self.dino_from_latent(
             dino_snapshot,
             latent_snapshot,

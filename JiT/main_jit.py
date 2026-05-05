@@ -401,26 +401,15 @@ def main(args):
     print("Gradient accumulation steps: %d" % args.accum_iter)
     print("Effective batch size: %d" % eff_batch_size)
 
-    uses_structural_cfg_mask = args.label_drop_prob > 0.0
-    ddp_find_unused_parameters = (
-        args.ddp_find_unused_parameters or uses_structural_cfg_mask
-    )
-    ddp_static_graph = args.ddp_static_graph and not uses_structural_cfg_mask
-    if global_rank == 0 and uses_structural_cfg_mask and args.ddp_static_graph:
-        print(
-            "Structural CFG masking is active; disabling DDP static_graph and "
-            "enabling find_unused_parameters for masked training batches."
-        )
-
     model = torch.nn.parallel.DistributedDataParallel(
         model,
         device_ids=[args.gpu],
         output_device=args.gpu,
-        find_unused_parameters=ddp_find_unused_parameters,
+        find_unused_parameters=args.ddp_find_unused_parameters,
         bucket_cap_mb=args.ddp_bucket_cap_mb,
         broadcast_buffers=args.ddp_broadcast_buffers,
         gradient_as_bucket_view=args.ddp_gradient_as_bucket_view,
-        static_graph=ddp_static_graph,
+        static_graph=args.ddp_static_graph,
     )
     model_without_ddp = model.module
 
