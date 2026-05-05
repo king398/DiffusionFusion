@@ -14,41 +14,39 @@ Sample directory:
 
 Source: "Back to Basics: Let Denoising Generative Models Denoise" (Li and He, arXiv:2511.13720v2).
 
-### ImageNet Headline Results
+FID-50K / IS-50K. Headline rows use CFG interval; 200-epoch IS is not reported.
 
-FID-50K / IS-50K, Tables 7 and 8.
-
-| Model | Resolution | Params | GFLOPs | Epochs | FID | IS |
-|---|---:|---:|---:|---:|---:|---:|
-| JiT-B/16 | 256 | 131M | 25 | 600 | 3.66 | 275.1 |
-| JiT-L/16 | 256 | 459M | 88 | 600 | 2.36 | 298.5 |
-| JiT-H/16 | 256 | 953M | 182 | 600 | 1.86 | 303.4 |
-| JiT-G/16 | 256 | 2B | 383 | 600 | 1.82 | 292.6 |
-| JiT-B/32 | 512 | 133M | 26 | 600 | 4.02 | 271.0 |
-| JiT-L/32 | 512 | 462M | 89 | 600 | 2.53 | 299.9 |
-| JiT-H/32 | 512 | 956M | 183 | 600 | 1.94 | 309.1 |
-| JiT-G/32 | 512 | 2B | 384 | 600 | 1.78 | 306.8 |
-
-### Prediction Target Ablation
-
-FID-50K, ImageNet-256, JiT-B/16, 200 epochs, Table 2(a).
-
-| Loss Space | x-pred | eps-pred | v-pred |
-|---|---:|---:|---:|
-| x-loss | 10.14 | 379.21 | 107.55 |
-| eps-loss | 10.45 | 394.58 | 126.88 |
-| v-loss | 8.62 | 372.38 | 96.53 |
-
-### Advanced Transformer Ablation
-
-FID-50K, ImageNet-256, 200 epochs, Table 4. Parentheses use CFG interval.
-
-| Model | Setting | FID |
-|---|---|---:|
-| JiT-B/16 | SwiGLU + RMSNorm | 7.48 (6.32) |
-| JiT-B/16 | + RoPE + qk-norm | 6.69 (5.44) |
-| JiT-B/16 | + in-context class tokens | 5.49 (4.37) |
-| JiT-L/16 | + in-context class tokens | 3.39 (2.79) |
+| Category | Model / Setting | Resolution | Params | GFLOPs | Epochs | FID | IS | Source |
+|---|---|---:|---:|---:|---:|---:|---:|---|
+| headline | JiT-B/16 | 256 | 131M | 25 | 200 | 4.37 | - | Table 6 |
+| headline | JiT-L/16 | 256 | 459M | 88 | 200 | 2.79 | - | Table 6 |
+| headline | JiT-H/16 | 256 | 953M | 182 | 200 | 2.29 | - | Table 6 |
+| headline | JiT-G/16 | 256 | 2B | 383 | 200 | 2.15 | - | Table 6 |
+| headline | JiT-B/16 | 256 | 131M | 25 | 600 | 3.66 | 275.1 | Table 7 |
+| headline | JiT-L/16 | 256 | 459M | 88 | 600 | 2.36 | 298.5 | Table 7 |
+| headline | JiT-H/16 | 256 | 953M | 182 | 600 | 1.86 | 303.4 | Table 7 |
+| headline | JiT-G/16 | 256 | 2B | 383 | 600 | 1.82 | 292.6 | Table 7 |
+| headline | JiT-B/32 | 512 | 133M | 26 | 200 | 4.64 | - | Table 6 |
+| headline | JiT-L/32 | 512 | 462M | 89 | 200 | 3.06 | - | Table 6 |
+| headline | JiT-H/32 | 512 | 956M | 183 | 200 | 2.51 | - | Table 6 |
+| headline | JiT-G/32 | 512 | 2B | 384 | 200 | 2.11 | - | Table 6 |
+| headline | JiT-B/32 | 512 | 133M | 26 | 600 | 4.02 | 271.0 | Table 8 |
+| headline | JiT-L/32 | 512 | 462M | 89 | 600 | 2.53 | 299.9 | Table 8 |
+| headline | JiT-H/32 | 512 | 956M | 183 | 600 | 1.94 | 309.1 | Table 8 |
+| headline | JiT-G/32 | 512 | 2B | 384 | 600 | 1.78 | 306.8 | Table 8 |
+| pred ablation | JiT-B/16, x-loss / x-pred | 256 | - | - | 200 | 10.14 | - | Table 2(a) |
+| pred ablation | JiT-B/16, x-loss / eps-pred | 256 | - | - | 200 | 379.21 | - | Table 2(a) |
+| pred ablation | JiT-B/16, x-loss / v-pred | 256 | - | - | 200 | 107.55 | - | Table 2(a) |
+| pred ablation | JiT-B/16, eps-loss / x-pred | 256 | - | - | 200 | 10.45 | - | Table 2(a) |
+| pred ablation | JiT-B/16, eps-loss / eps-pred | 256 | - | - | 200 | 394.58 | - | Table 2(a) |
+| pred ablation | JiT-B/16, eps-loss / v-pred | 256 | - | - | 200 | 126.88 | - | Table 2(a) |
+| pred ablation | JiT-B/16, v-loss / x-pred | 256 | - | - | 200 | 8.62 | - | Table 2(a) |
+| pred ablation | JiT-B/16, v-loss / eps-pred | 256 | - | - | 200 | 372.38 | - | Table 2(a) |
+| pred ablation | JiT-B/16, v-loss / v-pred | 256 | - | - | 200 | 96.53 | - | Table 2(a) |
+| architecture | JiT-B/16, SwiGLU + RMSNorm | 256 | - | - | 200 | 7.48 (6.32) | - | Table 4 |
+| architecture | JiT-B/16, + RoPE + qk-norm | 256 | - | - | 200 | 6.69 (5.44) | - | Table 4 |
+| architecture | JiT-B/16, + in-context class tokens | 256 | - | - | 200 | 5.49 (4.37) | - | Table 4 |
+| architecture | JiT-L/16, + in-context class tokens | 256 | - | - | 200 | 3.39 (2.79) | - | Table 4 |
 
 ## V-Co Paper
 
