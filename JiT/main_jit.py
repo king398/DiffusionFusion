@@ -139,7 +139,7 @@ def get_args_parser():
         help='Enable DDP unused-parameter detection for dynamic structural masks',
     )
     add_bool_arg(
-        parser, 'compile_model', False,
+        parser, 'compile_model', True,
         help='Compile the DDP training model with torch.compile',
     )
 
@@ -507,7 +507,11 @@ def main(args):
                 misc.distributed_barrier()
 
             # Perform online evaluation at specified intervals
-            if args.online_eval and (epoch % args.eval_freq == 0 or epoch + 1 == args.epochs):
+            completed_epochs = epoch + 1
+            if args.online_eval and (
+                completed_epochs % args.eval_freq == 0
+                or completed_epochs == args.epochs
+            ):
                 torch.cuda.empty_cache()
                 with torch.no_grad():
                     evaluate(

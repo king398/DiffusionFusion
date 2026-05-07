@@ -51,7 +51,7 @@ fi
 
 IMAGENET_PATH="/work/hdd/bgnp/msalunkhe/data/imagenet/"
 OUTPUT_DIR="/work/nvme/bgnp/msalunkhe/outputs/jit_dual_struct_cfg_mask_200ep"
-WANDB_RUN_NAME="${WANDB_RUN_NAME:-jit_dual_struct_cfg_mask_80ep}"
+WANDB_RUN_NAME="${WANDB_RUN_NAME:-jit_dual_struct_cfg_mask_200ep}"
 FID_STATS_PATH="${FID_STATS_PATH:-/u/msalunkhe/DiffusionFusion/JiT/fid_stats/jit_in256_stats.npz}"
 NUM_IMAGES="${NUM_IMAGES:-10000}"
 EVAL_FREQ="${EVAL_FREQ:-40}"
@@ -62,7 +62,7 @@ BATCH_SIZE="${BATCH_SIZE:-128}"
 ACCUM_ITER="${ACCUM_ITER:-2}"
 mkdir -p "${OUTPUT_DIR}"
 COMPILE_ARGS=()
-if [[ "${JIT_COMPILE:-0}" == "1" || "${JIT_COMPILE:-0}" == "true" ]]; then
+if [[ "${JIT_COMPILE:-1}" == "1" || "${JIT_COMPILE:-1}" == "true" ]]; then
   COMPILE_ARGS+=(--compile_model)
 else
   COMPILE_ARGS+=(--no_compile_model)
