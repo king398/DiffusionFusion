@@ -1,13 +1,11 @@
-import json
 import math
 import os
 import shutil
 import time
 from collections.abc import Callable
-from contextlib import ExitStack, contextmanager, nullcontext
+from contextlib import nullcontext
 from itertools import islice
 
-import numpy as np
 import torch
 from PIL import Image
 
@@ -27,23 +25,10 @@ from JiT.decoder.losses import (
     vanilla_generator_loss,
 )
 
-def _dist_barrier():
-    misc.distributed_barrier()
-
-
 def _autocast_context(device: torch.device):
     if device.type == "cuda":
         return torch.autocast("cuda", dtype=torch.bfloat16)
     return nullcontext()
-
-
-@contextmanager
-def _discriminator_forward_context(
-    device: torch.device,
-):
-    with ExitStack() as stack:
-        stack.enter_context(_autocast_context(device))
-        yield
 
 
 def _unwrap_model(model):
@@ -144,10 +129,6 @@ def _raise_if_not_finite(loss_value: float, label: str):
         raise FloatingPointError(f"{label} is not finite: {loss_value}")
 
 
-def _reduce_metrics(metrics: dict[str, float]) -> dict[str, float]:
-    return {name: misc.all_reduce_mean(value) for name, value in metrics.items()}
-
-
 def _require_wandb():
     try:
         import wandb
@@ -199,14 +180,13 @@ def _discriminator_step(
     real_disc_images = _apply_discriminator_augment(real_disc_images, gan_state)
     fake_disc_images = _apply_discriminator_augment(fake_disc_images, gan_state)
 
-    with _discriminator_forward_context(device):
+    with _autocast_context(device):
         fake_logits, real_logits = discriminator(fake_disc_images, real_disc_images)
         disc_hinge_loss = hinge_discriminator_loss(real_logits, fake_logits)
-        disc_loss = disc_hinge_loss
 
-    disc_loss_value = float(disc_loss.item())
+    disc_loss_value = float(disc_hinge_loss.item())
     _raise_if_not_finite(disc_loss_value, "Discriminator loss")
-    disc_loss.backward()
+    disc_hinge_loss.backward()
     gan_state.discriminator_optimizer.step()
 
     metrics = {
@@ -408,7 +388,10 @@ def train_epoch(
         # In DDP, every rank must enter the same reductions even though only
         # rank 0 owns the logger integrations.
         if misc.is_dist_avail_and_initialized():
-            reduced_metrics = _reduce_metrics(step_metrics)
+            reduced_metrics = {
+                name: misc.all_reduce_mean(value)
+                for name, value in step_metrics.items()
+            }
         else:
             reduced_metrics = step_metrics
 
@@ -493,7 +476,7 @@ def evaluate(
         if os.path.isdir(eval_output_dir):
             shutil.rmtree(eval_output_dir)
         os.makedirs(eval_output_dir, exist_ok=True)
-    _dist_barrier()
+    misc.distributed_barrier()
 
     image_mean, image_std = _extract_image_normalization(data_loader)
     metric_logger = misc.MetricLogger(delimiter="  ")
@@ -551,7 +534,7 @@ def evaluate(
                         ),
                     )
 
-    _dist_barrier()
+    misc.distributed_barrier()
     metric_logger.synchronize_between_processes()
     recon_mse = metric_logger.meters["mse"].global_avg
 
@@ -593,7 +576,7 @@ def evaluate(
     if distribution_metrics_requested and misc.is_main_process() and os.path.exists(metrics_done_path):
         os.remove(metrics_done_path)
     if distribution_metrics_requested:
-        _dist_barrier()
+        misc.distributed_barrier()
 
     if distribution_metrics_requested and misc.is_main_process():
         torch_fidelity = _require_torch_fidelity()
@@ -655,7 +638,7 @@ def evaluate(
         misc.add_wandb_global_step(log_payload, wandb_step)
         wandb_run.log(log_payload)
 
-    _dist_barrier()
+    misc.distributed_barrier()
     if misc.is_main_process():
         if os.path.isdir(eval_output_dir):
             shutil.rmtree(eval_output_dir)

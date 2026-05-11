@@ -1,6 +1,3 @@
-
-
-
 from diffusers.models import AutoencoderKL
 from datasets import Array3D, Dataset, Features, Value, load_dataset
 from tqdm import tqdm
@@ -8,16 +5,11 @@ import os
 import logging
 import argparse
 import shutil
-from time import time
-from copy import deepcopy
-from PIL import Image
 from collections import OrderedDict
 import numpy as np
 import uuid
-from torchvision.datasets import ImageFolder
 from torch.utils.data.distributed import DistributedSampler
 from torch.utils.data import DataLoader
-from torch.nn.parallel import DistributedDataParallel as DDP
 import torch.distributed as dist
 import torch
 

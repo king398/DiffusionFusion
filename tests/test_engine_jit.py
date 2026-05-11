@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 import torch
 
-from JiT.engine_jit import _iter_accumulation_groups, train_one_epoch
+from JiT.engine_jit import train_one_epoch
 
 
 class _ToyJitModel(torch.nn.Module):
@@ -32,13 +32,6 @@ class _FakeWandbRun:
 
 
 class EngineJitAccumulationTests(unittest.TestCase):
-    def test_iter_accumulation_groups_keeps_partial_tail(self):
-        groups = [
-            (list(group), group_size)
-            for group, group_size in _iter_accumulation_groups(range(5), 2, 5)
-        ]
-        self.assertEqual(groups, [([0, 1], 2), ([2, 3], 2), ([4], 1)])
-
     def test_train_one_epoch_logs_after_optimizer_step_when_accumulating(self):
         model = _ToyJitModel()
         optimizer = torch.optim.SGD(model.parameters(), lr=0.1)

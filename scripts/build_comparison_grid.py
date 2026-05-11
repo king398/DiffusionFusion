@@ -157,9 +157,7 @@ def main() -> None:
             f"No matching PNG filenames found between {target_dir} and {result_dir}."
         )
 
-    output_path = args.output
-    if output_path is None:
-        output_path = target_dir.parent / "comparison_grid.png"
+    output_path = args.output or target_dir.parent / "comparison_grid.png"
     output_path = output_path.expanduser().resolve()
     output_path.parent.mkdir(parents=True, exist_ok=True)
 

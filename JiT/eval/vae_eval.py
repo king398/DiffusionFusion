@@ -319,7 +319,7 @@ def main() -> None:
             )
 
         model = Denoiser(eval_args).to(device)
-        checkpoint_state, stripped_prefix = resolve_denoiser_state_dict(
+        checkpoint_state, _ = resolve_denoiser_state_dict(
             checkpoint_payload[checkpoint_key],
             model,
         )
@@ -338,12 +338,9 @@ def main() -> None:
             save_folder.mkdir(parents=True, exist_ok=True)
         barrier_if_distributed(is_distributed, device)
 
-        prefix_message = ""
-        if stripped_prefix is not None:
-            prefix_message = f" after stripping `{stripped_prefix}.`"
         log_rank0(
             rank,
-            f"Evaluating checkpoint key `{checkpoint_key}` from epoch {checkpoint_epoch}{prefix_message}.",
+            f"Evaluating checkpoint key `{checkpoint_key}` from epoch {checkpoint_epoch}.",
         )
         if args.decode_backend == "vae":
             log_rank0(rank, f"Decoding JiT latents with VAE `{args.vae_pretrained_path}`")

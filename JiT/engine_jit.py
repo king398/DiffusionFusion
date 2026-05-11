@@ -5,7 +5,6 @@ import shutil
 import time
 from contextlib import contextmanager
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
-from itertools import islice
 
 import torch
 import numpy as np
@@ -147,17 +146,6 @@ def _drain_save_futures(futures, *, limit: int | None = None) -> None:
         for future in done:
             future.result()
             futures.remove(future)
-
-
-def _iter_accumulation_groups(iterable, accum_iter: int, total_micro_batches: int):
-    iterator = iter(iterable)
-    remaining = total_micro_batches
-    while remaining > 0:
-        micro_batches = list(islice(iterator, min(accum_iter, remaining)))
-        if not micro_batches:
-            break
-        remaining -= len(micro_batches)
-        yield micro_batches, len(micro_batches)
 
 
 def train_one_epoch(

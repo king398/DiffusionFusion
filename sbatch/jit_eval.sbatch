@@ -25,7 +25,7 @@ export PYTHONFAULTHANDLER=1
 export NCCL_NET_PLUGIN="${NCCL_NET_PLUGIN_OVERRIDE:-none}"
 
 IMAGENET_PATH="${IMAGENET_PATH:-/work/hdd/bgnp/msalunkhe/data/imagenet/}"
-TRAIN_OUTPUT_DIR="${TRAIN_OUTPUT_DIR:-/work/nvme/bgnp/msalunkhe/outputs/jit_dual_struct_cfg_mask_80ep}"
+TRAIN_OUTPUT_DIR="${TRAIN_OUTPUT_DIR:-/work/nvme/bgnp/msalunkhe/outputs/jit_dual_struct_cfg_mask_200ep}"
 RESUME_DIR="${RESUME_DIR:-${TRAIN_OUTPUT_DIR}}"
 OUTPUT_DIR="${OUTPUT_DIR:-${TRAIN_OUTPUT_DIR}/eval}"
 DECODER_CHECKPOINT="${DECODER_CHECKPOINT:-/work/nvme/bgnp/msalunkhe/outputs/jit_decoder_small_gan_lower_noise/checkpoint-last.pth}"

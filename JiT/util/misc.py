@@ -115,12 +115,10 @@ class MetricLogger(object):
             type(self).__name__, attr))
 
     def __str__(self):
-        loss_str = []
-        for name, meter in self.meters.items():
-            loss_str.append(
-                "{}: {}".format(name, str(meter))
-            )
-        return self.delimiter.join(loss_str)
+        return self.delimiter.join(
+            "{}: {}".format(name, str(meter))
+            for name, meter in self.meters.items()
+        )
 
     def synchronize_between_processes(self):
         for meter in self.meters.values():
@@ -207,11 +205,7 @@ def setup_for_distributed(is_master):
 
 
 def is_dist_avail_and_initialized():
-    if not dist.is_available():
-        return False
-    if not dist.is_initialized():
-        return False
-    return True
+    return dist.is_available() and dist.is_initialized()
 
 
 def get_world_size():
@@ -336,8 +330,7 @@ def all_reduce_mean(x):
         dist.all_reduce(x_reduce)
         x_reduce /= world_size
         return x_reduce.item()
-    else:
-        return x
+    return x
 
 
 def configure_wandb_step_metrics(wandb_run):
