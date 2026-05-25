@@ -1,0 +1,55 @@
+# Three-stream co-denoising: SD-VAE latent + DINOv2 + EVA-02, V-Co joint attention.
+#
+# This is the Stage 4 research target. `fusion: joint` selects every-block
+# all-to-all attention (JiTMultiStream fusion_mode="joint"); it diverges from the
+# pairwise / dual baseline and must be trained from scratch. The top-level
+# `fusion:` key is honored when --fusion is not passed on the CLI; an explicit
+# --fusion flag overrides it.
+#
+# EVA-02 is an AUXILIARY co-denoising target: it is denoised alongside latent+dino
+# but NOT decoded. The decoder + FID path stay on latent+dino -> 256px, so the
+# existing decoder checkpoint and fid_stats/jit_in256_stats.npz apply unchanged.
+# (The engine decodes sampled["latent"]/sampled["dino"] by name — those streams
+# must exist, and they do below.)
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# TUNING NOTE — per-stream `loss_weight` is the FIRST knob to sweep.
+# The weights below are deliberately NEUTRAL (all 1.0); this is NOT a tuned
+# weighting. V-Co found semantic streams help most at LOW weight (~0.1-0.5), while
+# the 4.03 dual-stream baseline used dino=1.0. Sweep the semantic weights
+# (e.g. dino/eva02 in {0.1, 0.25, 0.5, 1.0}) before drawing conclusions; keep the
+# image-side latent at 1.0. Do not treat 1.0/1.0/1.0 as validated.
+# ─────────────────────────────────────────────────────────────────────────────
+fusion: joint
+
+streams:
+  - name: latent
+    role: image_side          # exactly one stream must be image_side
+    feature_channels: 4
+    feature_spatial: 32        # SD-VAE latent grid for 256px images
+    patch_size: 2              # -> 16x16 = 256 tokens
+    tokenizer: latent          # BottleneckPatchEmbed
+    bottleneck_dim: 128
+    time_shift: 0.0
+    loss_weight: 1.0           # keep image-side at 1.0
+    dir_name: imagenet256_latents
+
+  - name: dino
+    role: semantic
+    feature_channels: 768      # DINOv2 ViT-B feature dim
+    feature_spatial: 16        # -> 16x16 = 256 tokens
+    patch_size: 1
+    tokenizer: linear
+    time_shift: 0.0
+    loss_weight: 1.0           # TUNE (semantic): try 0.1-0.5
+    dir_name: imagenet256_dinov3_features
+
+  - name: eva02
+    role: semantic
+    feature_channels: 384      # EVA-02 small patch-14 feature dim
+    feature_spatial: 16        # 224 / 14 = 16 -> 16x16 = 256 tokens (matches the grid)
+    patch_size: 1
+    tokenizer: linear
+    time_shift: 0.0
+    loss_weight: 1.0           # TUNE (semantic): try 0.1-0.5
+    dir_name: imagenet224_eva02_small_features
