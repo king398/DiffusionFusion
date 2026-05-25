@@ -42,12 +42,14 @@ class Denoiser(nn.Module):
         self.semantic_names: List[str] = [s.name for s in specs if s.role == "semantic"]
         self.image_side_name: str = self.image_side_names[0]
 
+        fusion = getattr(args, "fusion", "pairwise")
         self.net: nn.Module = JiT_models[args.model](
             specs=list(specs),
             num_classes=args.class_num,
             attn_drop=args.attn_dropout,
             proj_drop=args.proj_dropout,
             input_size=args.latent_size,
+            fusion_mode=fusion,
         )
 
         self.latent_size: int = args.latent_size

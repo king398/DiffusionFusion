@@ -2,6 +2,7 @@ import argparse
 import datetime
 import numpy as np
 import os
+import sys
 
 import time
 from pathlib import Path
@@ -57,6 +58,13 @@ def get_args_parser():
     # architecture
     parser.add_argument('--model', default='JiT-Dual-B/2-4C-896', type=str, metavar='MODEL',
                         help='Name of the model to train')
+    parser.add_argument('--fusion', default='pairwise', choices=['pairwise', 'joint'],
+                        help='Cross-stream fusion mode. "pairwise" (default) keeps the '
+                             'per-stream towers with periodic cross-fusion (the dual '
+                             'baseline). "joint" uses V-Co-style all-to-all attention at '
+                             'every block; it diverges from the pairwise baseline and must '
+                             'be trained from scratch. A top-level "fusion:" key in '
+                             '--streams_config is honored when --fusion is left unset.')
     parser.add_argument('--latent_size', default=32,
                         type=int, help='Latent size')
     parser.add_argument('--dino_patches', default=16,
@@ -324,6 +332,47 @@ def load_stream_specs(args) -> Tuple[List[StreamSpec], Dict[str, str]]:
     return specs, dir_names
 
 
+def _streams_config_fusion(args) -> "str | None":
+    """Return the top-level ``fusion:`` value from the streams_config YAML, if any.
+
+    The streams_config YAML may carry an optional top-level ``fusion`` key
+    alongside its ``streams`` list; ``load_stream_specs`` ignores it (it only
+    reads ``streams``), so we peek at it separately here.
+    """
+    streams_config = getattr(args, "streams_config", None)
+    if not streams_config:
+        return None
+    with open(streams_config, "r", encoding="utf-8") as f:
+        data = yaml.safe_load(f)
+    if isinstance(data, dict) and data.get("fusion") is not None:
+        return str(data["fusion"])
+    return None
+
+
+def resolve_fusion(args, argv=None) -> str:
+    """Resolve the effective fusion mode.
+
+    Precedence: an explicit ``--fusion`` CLI flag wins; otherwise a top-level
+    ``fusion:`` key in ``--streams_config`` is honored; otherwise the CLI
+    default (``"pairwise"``) stands.
+    """
+    tokens = sys.argv[1:] if argv is None else argv
+    cli_explicit = any(
+        tok == "--fusion" or tok.startswith("--fusion=") for tok in tokens
+    )
+    if cli_explicit:
+        fusion = args.fusion
+    else:
+        yaml_fusion = _streams_config_fusion(args)
+        fusion = yaml_fusion if yaml_fusion is not None else args.fusion
+    if fusion not in ("pairwise", "joint"):
+        raise ValueError(
+            f"fusion must be 'pairwise' or 'joint', got {fusion!r} "
+            "(check --fusion or the streams_config 'fusion:' key)."
+        )
+    return fusion
+
+
 def init_loggers(args, global_rank):
     log_writer = None
     if global_rank == 0 and args.output_dir:
@@ -466,6 +515,39 @@ def _maybe_remap_dual_checkpoint(state_dict, *, label):
     return {prefix + k: v for k, v in remapped_bare.items()}
 
 
+def _validate_ema_checkpoint_state_dict(state_dict, model_without_ddp, *, label):
+    """Validate the subset of checkpoint state used for EMA parameter swaps."""
+    if not isinstance(state_dict, dict):
+        raise TypeError(f"{label} checkpoint state must be a dict, got {type(state_dict)!r}.")
+
+    model_state_keys = set(model_without_ddp.state_dict())
+    named_parameters = dict(model_without_ddp.named_parameters())
+    state_keys = set(state_dict)
+    missing_parameters = sorted(set(named_parameters) - state_keys)
+    unexpected_keys = sorted(state_keys - model_state_keys)
+    shape_mismatches = [
+        f"{name}: checkpoint={tuple(state_dict[name].shape)}, model={tuple(param.shape)}"
+        for name, param in named_parameters.items()
+        if name in state_dict and state_dict[name].shape != param.shape
+    ]
+    if missing_parameters or unexpected_keys or shape_mismatches:
+        details = []
+        if missing_parameters:
+            details.append(f"missing parameters={missing_parameters[:10]}")
+        if unexpected_keys:
+            details.append(f"unexpected keys={unexpected_keys[:10]}")
+        if shape_mismatches:
+            details.append(f"shape mismatches={shape_mismatches[:10]}")
+        raise RuntimeError(
+            f"{label} checkpoint is incompatible with EMA parameter swap after remap: "
+            + "; ".join(details)
+        )
+    print(
+        f"Validated {label} checkpoint for EMA swap: "
+        f"{len(named_parameters)} parameters found, zero unexpected keys."
+    )
+
+
 def resume_or_init_ema(args, model_without_ddp, optimizer, device):
     checkpoint_path = Path(args.resume) / "checkpoint-last.pth" if args.resume else None
     if checkpoint_path and checkpoint_path.exists():
@@ -480,6 +562,13 @@ def resume_or_init_ema(args, model_without_ddp, optimizer, device):
             checkpoint['model_ema2'], label="model_ema2"
         )
         model_without_ddp.load_state_dict(checkpoint['model'])
+        print("Strictly loaded model checkpoint: zero missing or unexpected keys.")
+        _validate_ema_checkpoint_state_dict(
+            checkpoint['model_ema1'], model_without_ddp, label="model_ema1"
+        )
+        _validate_ema_checkpoint_state_dict(
+            checkpoint['model_ema2'], model_without_ddp, label="model_ema2"
+        )
         model_without_ddp.ema_params1 = [
             checkpoint['model_ema1'][name].to(device)
             for name, _ in model_without_ddp.named_parameters()
@@ -529,6 +618,7 @@ def main(args):
 
     specs, stream_dirs = load_stream_specs(args)
     args.streams = specs
+    args.fusion = resolve_fusion(args)
     image_side_names = [spec.name for spec in specs if spec.role == "image_side"]
     if len(image_side_names) != 1:
         raise ValueError(
