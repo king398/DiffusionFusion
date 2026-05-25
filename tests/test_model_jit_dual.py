@@ -2,7 +2,7 @@ import unittest
 
 import torch
 
-from JiT.model_jit import CrossFusionBlock, JiT_models
+from JiT.model_jit import CrossFusionBlock, JiTDualStream, JiT_Dual_B_2_4C_896, JiT_models
 
 
 class _AddDirection(torch.nn.Module):
@@ -18,17 +18,24 @@ class _AddDirection(torch.nn.Module):
 
 
 class JiTDualStreamTests(unittest.TestCase):
-    def _build_model(self, **overrides):
+    """Sanity checks on the legacy dual-stream model.
+
+    Stage 2 moved the production registry over to JiTMultiStream; these tests
+    keep the legacy `JiTDualStream` exercised so the parity reference and Stage 1
+    remap helper remain wired up.
+    """
+
+    def _build_dual_model(self, **overrides):
         kwargs = dict(
             input_size=8,
             dino_patches=4,
             in_context_len=4,
         )
         kwargs.update(overrides)
-        return JiT_models["JiT-Dual-B/2-4C-896"](**kwargs)
+        return JiT_Dual_B_2_4C_896(**kwargs)
 
     def test_dual_variant_exposes_early_context_and_periodic_fusion(self):
-        model = self._build_model()
+        model = self._build_dual_model()
 
         self.assertEqual(model.in_context_start, 0)
         self.assertEqual(model.cross_fusion_layers, (4, 8))
@@ -40,7 +47,7 @@ class JiTDualStreamTests(unittest.TestCase):
         self.assertEqual(set(JiT_models), {"JiT-Dual-B/2-4C-896"})
 
     def test_dual_variant_keeps_latent_and_dino_towers_separate(self):
-        model = self._build_model()
+        model = self._build_dual_model()
 
         self.assertNotEqual(
             model.latent_blocks[0].attn.qkv.weight.data_ptr(),
@@ -52,7 +59,7 @@ class JiTDualStreamTests(unittest.TestCase):
         )
 
     def test_dual_variant_forward_preserves_external_shapes(self):
-        model = self._build_model()
+        model = self._build_dual_model()
         latent = torch.randn(1, 4, 8, 8)
         dino = torch.randn(1, 768, 4, 4)
         t = torch.tensor([1.0])

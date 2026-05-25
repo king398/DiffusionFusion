@@ -15,9 +15,13 @@ class _ToyJitModel(torch.nn.Module):
         self.weight = torch.nn.Parameter(torch.tensor(1.0))
         self.ema_updates = 0
 
-    def forward(self, latent, dino, labels):
+    def forward(self, streams, labels):
         del labels
-        return self.weight * (latent.float().mean() + dino.float().mean())
+        # Sum mean of every stream so the dict iteration order is irrelevant.
+        accumulator = torch.zeros((), dtype=torch.float32)
+        for tensor in streams.values():
+            accumulator = accumulator + tensor.float().mean()
+        return self.weight * accumulator
 
     def update_ema(self):
         self.ema_updates += 1

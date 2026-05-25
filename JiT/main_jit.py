@@ -1,11 +1,13 @@
 import argparse
 import datetime
 import numpy as np
-import os 
+import os
 
 import time
 from pathlib import Path
 import math
+from typing import Dict, List, Tuple
+
 import torch
 import torch.backends.cudnn as cudnn
 
@@ -16,14 +18,16 @@ except ImportError:
 
 import JiT.util.misc as misc
 from JiT.util.dataset import (
-    RamLoadedShardDataset,
+    MultiStreamRamLoadedShardDataset,
     inspect_feature_shards,
 )
 from JiT.engine_jit import train_one_epoch, evaluate
 from JiT.denoiser import Denoiser
+from JiT.model_jit import StreamSpec, remap_dual_to_multistream
 from JiT.eval.diffusion_decoder import load_decoder_for_eval
 
 import wandb
+import yaml
 
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
@@ -177,6 +181,10 @@ def get_args_parser():
                         help='Path to DINO features dataset (HF dataset name or local path)')
     parser.add_argument('--latent_dir_name', default='imagenet256_latents', type=str,
                         help='Name for the output HF dataset containing VAE features')
+    parser.add_argument('--streams_config', type=str, default=None,
+                        help='Path to a YAML file describing the input streams. When unset, '
+                             'a 2-stream (latent + dino) config is synthesized from the legacy '
+                             'flat flags below for backward compatibility.')
 
     # checkpointing
     parser.add_argument('--output_dir', default='./output_dir',
@@ -216,6 +224,106 @@ def get_args_parser():
     return parser
 
 
+_LEGACY_LATENT_NAME = "latent"
+_LEGACY_DINO_NAME = "dino"
+
+
+def _legacy_two_stream_specs(args) -> Tuple[List[StreamSpec], Dict[str, str]]:
+    latent_spec = StreamSpec(
+        name=_LEGACY_LATENT_NAME,
+        role="image_side",
+        feature_channels=4,
+        feature_spatial=args.latent_size,
+        patch_size=2,
+        tokenizer="latent",
+        bottleneck_dim=128,
+        time_shift=0.0,
+        loss_weight=float(getattr(args, "latent_loss_weight", 1.0)),
+    )
+    dino_time_shift = getattr(args, "dino_time_shift", 0.0)
+    dino_time_shift = 0.0 if dino_time_shift is None else float(dino_time_shift)
+    dino_spec = StreamSpec(
+        name=_LEGACY_DINO_NAME,
+        role="semantic",
+        feature_channels=int(args.dino_hidden_size),
+        feature_spatial=int(args.dino_patches),
+        patch_size=1,
+        tokenizer="linear",
+        time_shift=dino_time_shift,
+        loss_weight=float(getattr(args, "dino_loss_weight", 1.0)),
+    )
+    dir_names = {
+        latent_spec.name: args.latent_dir_name,
+        dino_spec.name: args.dino_dir_name,
+    }
+    return [latent_spec, dino_spec], dir_names
+
+
+def _spec_from_yaml(entry: Dict[str, object]) -> Tuple[StreamSpec, str]:
+    required = (
+        "name",
+        "role",
+        "feature_channels",
+        "feature_spatial",
+        "patch_size",
+        "tokenizer",
+        "dir_name",
+    )
+    missing = [k for k in required if k not in entry]
+    if missing:
+        raise ValueError(
+            f"streams_config entry is missing required keys: {missing} (entry={entry})."
+        )
+    spec = StreamSpec(
+        name=str(entry["name"]),
+        role=str(entry["role"]),
+        feature_channels=int(entry["feature_channels"]),
+        feature_spatial=int(entry["feature_spatial"]),
+        patch_size=int(entry["patch_size"]),
+        tokenizer=str(entry["tokenizer"]),
+        bottleneck_dim=int(entry["bottleneck_dim"]) if entry.get("bottleneck_dim") is not None else None,
+        time_shift=float(entry.get("time_shift", 0.0) or 0.0),
+        loss_weight=float(entry.get("loss_weight", 1.0)),
+    )
+    return spec, str(entry["dir_name"])
+
+
+def load_stream_specs(args) -> Tuple[List[StreamSpec], Dict[str, str]]:
+    """Resolve a list of StreamSpecs plus a {name: dir_name} mapping.
+
+    If ``args.streams_config`` is set, parses the YAML file. Otherwise
+    synthesizes the canonical 2-stream (latent + dino) config from the
+    legacy flat flags so existing sbatch scripts keep working.
+    """
+    streams_config = getattr(args, "streams_config", None)
+    if not streams_config:
+        return _legacy_two_stream_specs(args)
+
+    with open(streams_config, "r", encoding="utf-8") as f:
+        data = yaml.safe_load(f)
+    if not isinstance(data, dict) or "streams" not in data:
+        raise ValueError(
+            f"streams_config {streams_config!r} must define a top-level 'streams' list."
+        )
+    entries = data["streams"]
+    if not isinstance(entries, list) or not entries:
+        raise ValueError(
+            f"streams_config {streams_config!r} has an empty or malformed 'streams' list."
+        )
+
+    specs: List[StreamSpec] = []
+    dir_names: Dict[str, str] = {}
+    for entry in entries:
+        spec, dir_name = _spec_from_yaml(entry)
+        if spec.name in dir_names:
+            raise ValueError(
+                f"Duplicate stream name in streams_config: {spec.name!r}."
+            )
+        specs.append(spec)
+        dir_names[spec.name] = dir_name
+    return specs, dir_names
+
+
 def init_loggers(args, global_rank):
     log_writer = None
     if global_rank == 0 and args.output_dir:
@@ -238,10 +346,10 @@ def init_loggers(args, global_rank):
     return log_writer, wandb_run
 
 
-def build_train_loader(args, latent_store, dino_store, num_tasks, global_rank):
-    dataset = RamLoadedShardDataset(
-        latent_store=latent_store,
-        dino_store=dino_store,
+def build_train_loader(args, stores, label_authority, num_tasks, global_rank):
+    dataset = MultiStreamRamLoadedShardDataset(
+        stores=stores,
+        label_authority=label_authority,
         batch_size=args.batch_size,
         num_replicas=num_tasks,
         rank=global_rank,
@@ -258,12 +366,11 @@ def build_train_loader(args, latent_store, dino_store, num_tasks, global_rank):
     return dataset, loader
 
 
-def describe_dataset_plan(dataset, latent_store, dino_store, args):
+def describe_dataset_plan(dataset, stores, args):
     plan = dataset.describe_current_plan()
     max_shard_samples = max(span.size for span in dataset.logical_shards)
-    approx_max_ram_bytes = max_shard_samples * (
-        latent_store.bytes_per_sample + dino_store.bytes_per_sample
-    )
+    bytes_per_sample = sum(store.bytes_per_sample for store in stores.values())
+    approx_max_ram_bytes = max_shard_samples * bytes_per_sample
     print(
         "RAM shard loading enabled using "
         f"{plan['logical_shard_count']} logical shards from {plan['logical_shard_source']}."
@@ -313,10 +420,65 @@ def load_eval_decoder(args, device, global_rank):
     return decoder
 
 
+_DUAL_STATE_DICT_MARKERS = (
+    "latent_blocks.",
+    "dino_blocks.",
+    "x_embedder.",
+    "dino_embedder.",
+    "cross_fusion_blocks.",
+    "latent_final_layer.",
+    "dino_final_layer.",
+    "latent_in_context_posemb",
+    "dino_in_context_posemb",
+)
+
+
+def _maybe_remap_dual_checkpoint(state_dict, *, label):
+    """Detect a dual-stream state_dict and translate it to multistream keys.
+
+    Checkpoints saved by the production training loop nest model parameters
+    under a top-level ``net.`` wrapper (since the Denoiser stores its network
+    in ``self.net``). We strip that prefix when remapping and reapply it
+    afterwards so callers can plug the result straight into ``load_state_dict``.
+    """
+    if not isinstance(state_dict, dict) or not state_dict:
+        return state_dict
+    # All keys in a real checkpoint share the same outer prefix.
+    sample_key = next(iter(state_dict))
+    prefix = "net." if sample_key.startswith("net.") else ""
+
+    is_dual = False
+    for key in state_dict:
+        bare = key[len(prefix):]
+        for marker in _DUAL_STATE_DICT_MARKERS:
+            if bare == marker or bare.startswith(marker):
+                is_dual = True
+                break
+        if is_dual:
+            break
+    if not is_dual:
+        return state_dict
+    print(
+        f"Detected dual-stream {label} checkpoint; applying remap_dual_to_multistream."
+    )
+    bare = {key[len(prefix):]: value for key, value in state_dict.items()}
+    remapped_bare = remap_dual_to_multistream(bare)
+    return {prefix + k: v for k, v in remapped_bare.items()}
+
+
 def resume_or_init_ema(args, model_without_ddp, optimizer, device):
     checkpoint_path = Path(args.resume) / "checkpoint-last.pth" if args.resume else None
     if checkpoint_path and checkpoint_path.exists():
         checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+        checkpoint['model'] = _maybe_remap_dual_checkpoint(
+            checkpoint['model'], label="model"
+        )
+        checkpoint['model_ema1'] = _maybe_remap_dual_checkpoint(
+            checkpoint['model_ema1'], label="model_ema1"
+        )
+        checkpoint['model_ema2'] = _maybe_remap_dual_checkpoint(
+            checkpoint['model_ema2'], label="model_ema2"
+        )
         model_without_ddp.load_state_dict(checkpoint['model'])
         model_without_ddp.ema_params1 = [
             checkpoint['model_ema1'][name].to(device)
@@ -365,10 +527,29 @@ def main(args):
 
     log_writer, wandb_run = init_loggers(args, global_rank)
 
-    latent_store = inspect_feature_shards(args.data_path, args.latent_dir_name)
-    dino_store = inspect_feature_shards(args.data_path, args.dino_dir_name)
+    specs, stream_dirs = load_stream_specs(args)
+    args.streams = specs
+    image_side_names = [spec.name for spec in specs if spec.role == "image_side"]
+    if len(image_side_names) != 1:
+        raise ValueError(
+            f"Streams config must declare exactly one image_side stream; got {image_side_names}."
+        )
+    label_authority = image_side_names[0]
+    if global_rank == 0:
+        print(
+            "Stream specs:",
+            [
+                f"{s.name}(role={s.role}, ch={s.feature_channels}, sp={s.feature_spatial}, p={s.patch_size})"
+                for s in specs
+            ],
+        )
+
+    stores = {
+        name: inspect_feature_shards(args.data_path, dir_name)
+        for name, dir_name in stream_dirs.items()
+    }
     dataset_train, data_loader_train = build_train_loader(
-        args, latent_store, dino_store, num_tasks, global_rank
+        args, stores, label_authority, num_tasks, global_rank
     )
     initial_steps_per_epoch = len(data_loader_train)
     if initial_steps_per_epoch <= 0:
@@ -376,7 +557,7 @@ def main(args):
     initial_optimizer_steps_per_epoch = math.ceil(initial_steps_per_epoch / args.accum_iter)
 
     if global_rank == 0:
-        describe_dataset_plan(dataset_train, latent_store, dino_store, args)
+        describe_dataset_plan(dataset_train, stores, args)
 
     torch._dynamo.config.cache_size_limit = 128
     torch._dynamo.config.optimize_ddp = False
