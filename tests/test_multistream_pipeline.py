@@ -261,28 +261,15 @@ class EmaCheckpointAutoRemapTests(unittest.TestCase):
         new_denoiser = Denoiser(new_args)
         new_denoiser.eval()
 
-        # Build a dual-stream checkpoint blob: full model + per-param-name EMA
-        # tensors mirrored from the multistream model so the loader can index
-        # them by name.
-        model_state = remap_dual_to_multistream(legacy_net.state_dict())
-        # Wrap under the Denoiser's "net." prefix so resume_or_init_ema's
-        # model_without_ddp.load_state_dict succeeds.
-        wrapped_model = {f"net.{k}": v for k, v in model_state.items()}
-        ema_blob = {
-            name: param.detach().clone()
-            for name, param in new_denoiser.named_parameters()
-        }
-
-        # The checkpoint payload uses the legacy (dual-stream) parameter
-        # naming inside `model_state`, while EMA dicts are keyed by the
-        # full `named_parameters()` paths.
+        # An actual pre-refactor checkpoint stores legacy names in the model
+        # state and both full-state EMA snapshots.
         legacy_keys_model = {
             f"net.{k}": v for k, v in legacy_net.state_dict().items()
         }
         checkpoint = {
             "model": legacy_keys_model,
-            "model_ema1": ema_blob,
-            "model_ema2": ema_blob,
+            "model_ema1": dict(legacy_keys_model),
+            "model_ema2": dict(legacy_keys_model),
         }
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -292,11 +279,25 @@ class EmaCheckpointAutoRemapTests(unittest.TestCase):
             args = SimpleNamespace(resume=tmpdir, start_epoch=0)
             optimizer = torch.optim.AdamW(new_denoiser.parameters(), lr=1e-4)
 
-            with patch("builtins.print"):
+            with patch("builtins.print") as print_mock:
                 resume_or_init_ema(
                     args, new_denoiser, optimizer, device=torch.device("cpu")
                 )
 
+        printed = [" ".join(str(value) for value in call.args) for call in print_mock.call_args_list]
+        for label in ("model", "model_ema1", "model_ema2"):
+            self.assertTrue(
+                any(f"Detected dual-stream {label} checkpoint" in line for line in printed)
+            )
+        self.assertTrue(
+            any("Strictly loaded model checkpoint" in line for line in printed)
+        )
+        self.assertTrue(
+            any("Validated model_ema1 checkpoint for EMA swap" in line for line in printed)
+        )
+        self.assertTrue(
+            any("Validated model_ema2 checkpoint for EMA swap" in line for line in printed)
+        )
         self.assertIsNotNone(new_denoiser.ema_params1)
         self.assertIsNotNone(new_denoiser.ema_params2)
         param_shapes = [p.shape for p in new_denoiser.parameters()]

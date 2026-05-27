@@ -17,8 +17,11 @@ set -euo pipefail
 module load python/3.11.9
 module load cuda/13.1.1
 
-source /u/msalunkhe/.venv/bin/activate
-cd /u/msalunkhe/DiffusionFusion/JiT
+VENV_PATH="${VENV_PATH:-/u/msalunkhe/.venv}"
+REPO_DIR="${REPO_DIR:-/u/msalunkhe/DiffusionFusion}"
+
+source "${VENV_PATH}/bin/activate"
+cd "${REPO_DIR}/JiT"
 
 export CUDA_DEVICE_ORDER=PCI_BUS_ID
 export PYTHONFAULTHANDLER=1
@@ -29,7 +32,7 @@ TRAIN_OUTPUT_DIR="${TRAIN_OUTPUT_DIR:-/work/nvme/bgnp/msalunkhe/outputs/jit_dual
 RESUME_DIR="${RESUME_DIR:-${TRAIN_OUTPUT_DIR}}"
 OUTPUT_DIR="${OUTPUT_DIR:-${TRAIN_OUTPUT_DIR}/eval}"
 DECODER_CHECKPOINT="${DECODER_CHECKPOINT:-/work/nvme/bgnp/msalunkhe/outputs/jit_decoder_small_gan_lower_noise/checkpoint-last.pth}"
-FID_STATS_PATH="${FID_STATS_PATH:-/u/msalunkhe/DiffusionFusion/JiT/fid_stats/jit_in256_stats.npz}"
+FID_STATS_PATH="${FID_STATS_PATH:-${REPO_DIR}/JiT/fid_stats/jit_in256_stats.npz}"
 WANDB_MODE="${WANDB_MODE:-online}"
 
 MODEL="${MODEL:-JiT-Dual-B/2-4C-896}"
@@ -40,6 +43,8 @@ INTERVAL_MIN="${INTERVAL_MIN:-0.1}"
 INTERVAL_MAX="${INTERVAL_MAX:-1.0}"
 CLASS_NUM="${CLASS_NUM:-1000}"
 DINO_TIME_SHIFT="${DINO_TIME_SHIFT:-0.0}"
+SAMPLING_METHOD="${SAMPLING_METHOD:-heun}"
+NUM_SAMPLING_STEPS="${NUM_SAMPLING_STEPS:-50}"
 
 if [[ ! -f "${RESUME_DIR}/checkpoint-last.pth" ]]; then
   echo "JiT checkpoint not found: ${RESUME_DIR}/checkpoint-last.pth" >&2
@@ -64,6 +69,8 @@ OMP_NUM_THREADS=16 torchrun \
   --P_std 0.8 \
   --noise_scale 1.0 \
   --dino_time_shift "${DINO_TIME_SHIFT}" \
+  --sampling_method "${SAMPLING_METHOD}" \
+  --num_sampling_steps "${NUM_SAMPLING_STEPS}" \
   --gen_bsz "${GEN_BSZ}" \
   --num_images "${NUM_IMAGES}" \
   --cfg "${CFG}" \

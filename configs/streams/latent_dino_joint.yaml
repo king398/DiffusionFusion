@@ -1,0 +1,32 @@
+# Two-stream (SD-VAE latent + DINOv2) config using V-Co-style joint attention.
+#
+# Identical streams to the default latent+dino setup, but `fusion: joint` selects
+# the every-block all-to-all attention (JiTMultiStream fusion_mode="joint") instead
+# of the periodic pairwise cross-fusion. Joint mode diverges from the dual baseline
+# and must be trained from scratch.
+#
+# The top-level `fusion:` key is honored when --fusion is not passed on the CLI;
+# an explicit --fusion flag overrides it.
+fusion: joint
+
+streams:
+  - name: latent
+    role: image_side          # exactly one stream must be image_side
+    feature_channels: 4
+    feature_spatial: 32        # SD-VAE latent grid for 256px images
+    patch_size: 2              # -> 16x16 tokens
+    tokenizer: latent          # BottleneckPatchEmbed
+    bottleneck_dim: 128
+    time_shift: 0.0
+    loss_weight: 1.0
+    dir_name: imagenet256_latents
+
+  - name: dino
+    role: semantic
+    feature_channels: 768      # DINOv2 ViT-B feature dim
+    feature_spatial: 16        # -> 16x16 tokens (matches the latent token grid)
+    patch_size: 1
+    tokenizer: linear          # nn.Linear projection
+    time_shift: 0.0
+    loss_weight: 1.0
+    dir_name: imagenet256_dinov3_features
