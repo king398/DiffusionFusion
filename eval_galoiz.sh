@@ -1,0 +1,63 @@
+#!/bin/bash
+# Independent eval launcher: galoiz checkout + venv, mirroring sbatch/jit_eval.sbatch
+# but with galoiz-owned paths. Overridable via env: NPROC, NUM_IMAGES, OUTPUT_DIR, etc.
+# Baseline config (Heun/50, CFG 2.9, interval 0.1-1.0, ema1) comes from sbatch args + main_jit defaults.
+set -eo pipefail
+REPO=/u/galoiz/DiffusionFusion-independent-backup
+
+module load python/3.11.9
+source "$REPO/.venv/bin/activate"
+cd "$REPO/JiT"
+
+# Force torch's bundled CUDA 12.8 libs to win over the ambient Cray/HPC-SDK CUDA
+# libs on LD_LIBRARY_PATH. Without this, a shadowing system cuBLAS throws
+# CUBLAS_STATUS_INVALID_VALUE on non-contiguous bf16 batched GEMMs (dino embedder).
+NVLIBS=$(echo "$REPO"/.venv/lib/python3.11/site-packages/nvidia/*/lib | tr ' ' ':')
+export LD_LIBRARY_PATH="${NVLIBS}:${LD_LIBRARY_PATH:-}"
+
+export CUDA_DEVICE_ORDER=PCI_BUS_ID
+export PYTHONFAULTHANDLER=1
+export NCCL_NET_PLUGIN="${NCCL_NET_PLUGIN_OVERRIDE:-none}"
+export WANDB_MODE="${WANDB_MODE:-offline}"
+
+NPROC="${NPROC:-1}"
+NUM_IMAGES="${NUM_IMAGES:-256}"
+GEN_BSZ="${GEN_BSZ:-64}"
+TRAIN_OUTPUT_DIR="${TRAIN_OUTPUT_DIR:-/work/nvme/bgnp/msalunkhe/outputs/jit_dual_struct_cfg_mask_80ep}"
+RESUME_DIR="${RESUME_DIR:-${TRAIN_OUTPUT_DIR}}"
+OUTPUT_DIR="${OUTPUT_DIR:-${REPO}/artifacts/eval_stage2_testb}"
+DECODER_CHECKPOINT="${DECODER_CHECKPOINT:-/work/nvme/bgnp/msalunkhe/outputs/jit_decoder_small_gan_lower_noise/checkpoint-last.pth}"
+FID_STATS_PATH="${FID_STATS_PATH:-${REPO}/JiT/fid_stats/jit_in256_stats.npz}"
+IMAGENET_PATH="${IMAGENET_PATH:-/work/hdd/bgnp/msalunkhe/data/imagenet/}"
+MODEL="${MODEL:-JiT-Dual-B/2-4C-896}"
+CFG="${CFG:-2.9}"
+INTERVAL_MIN="${INTERVAL_MIN:-0.1}"
+INTERVAL_MAX="${INTERVAL_MAX:-1.0}"
+CLASS_NUM="${CLASS_NUM:-1000}"
+DINO_TIME_SHIFT="${DINO_TIME_SHIFT:-0.0}"
+
+if [[ ! -f "${RESUME_DIR}/checkpoint-last.pth" ]]; then
+  echo "JiT checkpoint not found: ${RESUME_DIR}/checkpoint-last.pth" >&2; exit 1
+fi
+if [[ ! -f "${DECODER_CHECKPOINT}" ]]; then
+  echo "Decoder checkpoint not found: ${DECODER_CHECKPOINT}" >&2; exit 1
+fi
+mkdir -p "${OUTPUT_DIR}"
+
+echo "[eval_galoiz] NPROC=${NPROC} NUM_IMAGES=${NUM_IMAGES} GEN_BSZ=${GEN_BSZ} CFG=${CFG} interval=[${INTERVAL_MIN},${INTERVAL_MAX}]"
+echo "[eval_galoiz] RESUME_DIR=${RESUME_DIR}"
+echo "[eval_galoiz] OUTPUT_DIR=${OUTPUT_DIR}"
+
+OMP_NUM_THREADS=16 torchrun \
+  --nproc_per_node="${NPROC}" --nnodes=1 --node_rank=0 \
+  main_jit.py \
+  --model "${MODEL}" \
+  --proj_dropout 0.0 \
+  --P_mean -0.8 --P_std 0.8 --noise_scale 1.0 \
+  --dino_time_shift "${DINO_TIME_SHIFT}" \
+  --gen_bsz "${GEN_BSZ}" --num_images "${NUM_IMAGES}" \
+  --cfg "${CFG}" --interval_min "${INTERVAL_MIN}" --interval_max "${INTERVAL_MAX}" \
+  --output_dir "${OUTPUT_DIR}" --resume "${RESUME_DIR}" --data_path "${IMAGENET_PATH}" \
+  --evaluate_gen --fid_stats_path "${FID_STATS_PATH}" \
+  --decoder_checkpoint "${DECODER_CHECKPOINT}" --decoder_checkpoint_key model_ema \
+  --class_num "${CLASS_NUM}" --wandb_mode "${WANDB_MODE}"
