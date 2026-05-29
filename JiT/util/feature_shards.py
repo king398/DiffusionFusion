@@ -267,7 +267,11 @@ def load_feature_range_to_ram(
 
 
 class PairedRamLoadedShardDataset(IterableDataset):
-    """Common RAM-shard iterator for aligned latent and DINO feature datasets."""
+    """Legacy 2-stream (latent + DINO) RAM-shard iterator.
+
+    Kept in place so legacy tests can still construct the old dual-stream
+    pipeline. New code should use :class:`MultiStreamShardDataset` instead.
+    """
 
     def __init__(
         self,
@@ -548,3 +552,348 @@ class PairedRamLoadedShardDataset(IterableDataset):
         self.epoch = epoch
         self._cached_epoch = None
         self._cached_plan = None
+
+
+class MultiStreamShardDataset(IterableDataset):
+    """RAM-shard iterator for N aligned feature streams.
+
+    Generalizes :class:`PairedRamLoadedShardDataset` to a dict of stores keyed
+    by stream name. All stores must have the same total size and the same
+    sample_id order; labels are taken from `stores[label_authority]`.
+    """
+
+    def __init__(
+        self,
+        stores: Dict[str, FeatureShardStore],
+        label_authority: str,
+        batch_size: int,
+        num_replicas: int = -1,
+        rank: int = -1,
+        shuffle_shards: bool = True,
+        seed: int = 0,
+        preload_next_shard: bool = True,
+    ):
+        if not stores:
+            raise ValueError("MultiStreamShardDataset requires at least one store.")
+        if label_authority not in stores:
+            raise ValueError(
+                f"label_authority {label_authority!r} is not in stores "
+                f"(have {sorted(stores.keys())})."
+            )
+        if num_replicas < 0:
+            num_replicas = dist.get_world_size() if dist.is_initialized() else 1
+        if rank < 0:
+            rank = dist.get_rank() if dist.is_initialized() else 0
+        if batch_size <= 0:
+            raise ValueError("batch_size must be positive for RAM shard loading.")
+
+        sizes = {name: store.total_size for name, store in stores.items()}
+        unique_sizes = set(sizes.values())
+        if len(unique_sizes) != 1:
+            raise ValueError(
+                "All feature stores must have the same total_size for RAM shard "
+                f"loading; got {sizes}."
+            )
+
+        self.stores: Dict[str, FeatureShardStore] = dict(stores)
+        self.stream_names: List[str] = list(stores.keys())
+        self.label_authority: str = label_authority
+        self.batch_size = batch_size
+        self.num_replicas = num_replicas
+        self.rank = rank
+        self.shuffle_shards = shuffle_shards
+        self.seed = seed
+        self.preload_next_shard = preload_next_shard
+        self.epoch = 0
+
+        self.logical_shard_store = self._select_logical_shard_store()
+        self.logical_shards = [
+            LogicalShardSpan(span.global_start, span.global_end)
+            for span in self.logical_shard_store.shard_spans
+        ]
+        if not self.logical_shards:
+            raise ValueError("RAM shard loading requires at least one logical shard.")
+
+        self._cached_epoch = None
+        self._cached_plan = None
+        self._warned_label_mismatch = False
+
+    def _select_logical_shard_store(self) -> FeatureShardStore:
+        # Choose the store with the most logical shards, breaking ties on
+        # bytes_per_sample descending and then by stream name for determinism.
+        return max(
+            self.stores.values(),
+            key=lambda store: (
+                len(store.shard_spans),
+                store.bytes_per_sample,
+                store.name,
+            ),
+        )
+
+    def _build_epoch_plan(self):
+        if self._cached_epoch == self.epoch and self._cached_plan is not None:
+            return self._cached_plan
+
+        generator = torch.Generator()
+        generator.manual_seed(self.seed + self.epoch)
+
+        if self.shuffle_shards:
+            shard_order = torch.randperm(
+                len(self.logical_shards), generator=generator
+            ).tolist()
+        else:
+            shard_order = list(range(len(self.logical_shards)))
+
+        shard_indices_by_rank = [[] for _ in range(self.num_replicas)]
+        samples_by_rank = [0 for _ in range(self.num_replicas)]
+        for shard_idx in shard_order:
+            target_rank = min(
+                range(self.num_replicas),
+                key=lambda replica: (samples_by_rank[replica], replica),
+            )
+            shard_indices_by_rank[target_rank].append(shard_idx)
+            samples_by_rank[target_rank] += self.logical_shards[shard_idx].size
+
+        num_samples_per_rank = min(samples_by_rank) // self.batch_size * self.batch_size
+        if num_samples_per_rank <= 0:
+            raise ValueError(
+                "RAM shard loading produced zero usable samples per rank. "
+                "Reduce batch size or use smaller feature shards."
+            )
+
+        self._cached_epoch = self.epoch
+        self._cached_plan = {
+            "shard_indices_by_rank": shard_indices_by_rank,
+            "samples_by_rank": samples_by_rank,
+            "num_samples_per_rank": num_samples_per_rank,
+            "num_batches": num_samples_per_rank // self.batch_size,
+            "logical_shard_count": len(self.logical_shards),
+            "logical_shard_source": self.logical_shard_store.name,
+        }
+        return self._cached_plan
+
+    def describe_current_plan(self) -> Dict[str, object]:
+        plan = self._build_epoch_plan()
+        return {
+            "logical_shard_source": plan["logical_shard_source"],
+            "logical_shard_count": plan["logical_shard_count"],
+            "num_batches": plan["num_batches"],
+            "num_samples_per_rank": plan["num_samples_per_rank"],
+            "samples_by_rank": list(plan["samples_by_rank"]),
+            "dropped_samples_per_rank": [
+                total - plan["num_samples_per_rank"] for total in plan["samples_by_rank"]
+            ],
+        }
+
+    def _load_logical_shard(self, shard_span: LogicalShardSpan) -> Dict[str, np.ndarray]:
+        rows_by_stream: Dict[str, Dict[str, np.ndarray]] = {}
+        for name, store in self.stores.items():
+            rows_by_stream[name] = load_feature_range_to_ram(
+                store,
+                shard_span.global_start,
+                shard_span.global_end,
+            )
+
+        # Validate sample_id alignment across every store.
+        reference_name = self.label_authority
+        reference_ids = rows_by_stream[reference_name]["sample_id"]
+        for name, rows in rows_by_stream.items():
+            if name == reference_name:
+                continue
+            if not np.array_equal(reference_ids, rows["sample_id"]):
+                mismatch_indices = np.flatnonzero(
+                    reference_ids != rows["sample_id"]
+                )[:5]
+                examples = [
+                    (
+                        int(idx),
+                        int(reference_ids[idx]),
+                        int(rows["sample_id"][idx]),
+                    )
+                    for idx in mismatch_indices
+                ]
+                raise ValueError(
+                    f"sample_id alignment diverged between stream {reference_name!r} "
+                    f"and stream {name!r} while materializing RAM shard "
+                    f"[{shard_span.global_start}, {shard_span.global_end}). "
+                    f"Examples (row, {reference_name}_id, {name}_id): {examples}"
+                )
+
+        # Use the authority's labels; warn (once) if another stream disagrees.
+        reference_labels = rows_by_stream[reference_name]["label"]
+        if not self._warned_label_mismatch:
+            for name, rows in rows_by_stream.items():
+                if name == reference_name:
+                    continue
+                label_mismatch = reference_labels != rows["label"]
+                if np.any(label_mismatch):
+                    mismatch_indices = np.flatnonzero(label_mismatch)[:5]
+                    mismatch_examples = [
+                        (
+                            int(reference_ids[idx]),
+                            int(reference_labels[idx]),
+                            int(rows["label"][idx]),
+                        )
+                        for idx in mismatch_indices
+                    ]
+                    print(
+                        f"Warning: labels diverged between stream {reference_name!r} "
+                        f"and stream {name!r} for {int(label_mismatch.sum())} samples "
+                        f"in RAM shard [{shard_span.global_start}, {shard_span.global_end}). "
+                        f"Continuing with {reference_name!r} labels. "
+                        f"Examples (sample_id, {reference_name}_label, {name}_label): "
+                        f"{mismatch_examples}"
+                    )
+                    self._warned_label_mismatch = True
+                    break
+
+        batch = {name: rows["feature"] for name, rows in rows_by_stream.items()}
+        batch["y"] = reference_labels
+        batch["sample_id"] = reference_ids
+        return batch
+
+    def _iter_rank_shards(
+        self, shard_indices: List[int]
+    ) -> Iterator[Tuple[LogicalShardSpan, Dict[str, np.ndarray]]]:
+        if not shard_indices:
+            return
+
+        if not self.preload_next_shard or len(shard_indices) == 1:
+            for shard_idx in shard_indices:
+                shard_span = self.logical_shards[shard_idx]
+                yield shard_span, self._load_logical_shard(shard_span)
+            return
+
+        executor = ThreadPoolExecutor(
+            max_workers=1,
+            thread_name_prefix=f"ram-shard-prefetch-r{self.rank}",
+        )
+        pending_future: Optional[Future] = None
+        try:
+            first_span = self.logical_shards[shard_indices[0]]
+            pending_future = executor.submit(self._load_logical_shard, first_span)
+
+            for idx, shard_idx in enumerate(shard_indices):
+                shard_span = self.logical_shards[shard_idx]
+                current_future = pending_future
+                if current_future is None:
+                    raise RuntimeError(
+                        "RAM shard prefetcher lost track of the current shard future."
+                    )
+
+                if idx + 1 < len(shard_indices):
+                    next_span = self.logical_shards[shard_indices[idx + 1]]
+                    pending_future = executor.submit(self._load_logical_shard, next_span)
+                else:
+                    pending_future = None
+
+                yield shard_span, current_future.result()
+        finally:
+            if pending_future is not None:
+                pending_future.cancel()
+            executor.shutdown(wait=True, cancel_futures=True)
+
+    def _iter_batch_rows(self) -> Iterator[Dict[str, np.ndarray]]:
+        plan = self._build_epoch_plan()
+        target_samples = plan["num_samples_per_rank"]
+        emitted_samples = 0
+        carry_batch = None
+
+        shard_iter = self._iter_rank_shards(plan["shard_indices_by_rank"][self.rank])
+        try:
+            for _shard_span, shard_rows in shard_iter:
+                if emitted_samples >= target_samples:
+                    break
+
+                shard_size = shard_rows["y"].shape[0]
+                cursor = 0
+
+                if carry_batch is not None:
+                    needed = self.batch_size - carry_batch["y"].shape[0]
+                    take = min(needed, shard_size)
+                    carry_batch = concat_rows(
+                        carry_batch, slice_rows(shard_rows, slice(0, take))
+                    )
+                    cursor = take
+                    if carry_batch["y"].shape[0] == self.batch_size:
+                        yield carry_batch
+                        emitted_samples += self.batch_size
+                        carry_batch = None
+
+                while (
+                    cursor + self.batch_size <= shard_size
+                    and emitted_samples + self.batch_size <= target_samples
+                ):
+                    batch_slice = slice(cursor, cursor + self.batch_size)
+                    yield slice_rows(shard_rows, batch_slice)
+                    emitted_samples += self.batch_size
+                    cursor += self.batch_size
+
+                if emitted_samples < target_samples and cursor < shard_size:
+                    max_leftover = min(shard_size - cursor, target_samples - emitted_samples)
+                    carry_slice = slice(cursor, cursor + max_leftover)
+                    carry_batch = slice_rows(shard_rows, carry_slice, copy=True)
+
+                del shard_rows
+                gc.collect()
+        finally:
+            close_fn = getattr(shard_iter, "close", None)
+            if close_fn is not None:
+                close_fn()
+
+        if carry_batch is not None:
+            raise RuntimeError(
+                "RAM shard loading finished with an incomplete batch. "
+                "This should not happen when num_samples_per_rank is batch-aligned."
+            )
+        if emitted_samples != target_samples:
+            raise RuntimeError(
+                f"RAM shard loading emitted {emitted_samples} samples on rank {self.rank}, "
+                f"expected {target_samples}."
+            )
+
+    def _format_batch(self, rows: Dict[str, np.ndarray]) -> Dict[str, torch.Tensor]:
+        out: Dict[str, torch.Tensor] = {
+            name: torch.from_numpy(rows[name]) for name in self.stream_names
+        }
+        out["y"] = torch.from_numpy(rows["y"])
+        out["sample_id"] = torch.from_numpy(rows["sample_id"])
+        return out
+
+    def __iter__(self):
+        worker_info = torch.utils.data.get_worker_info()
+        if worker_info is not None:
+            raise RuntimeError(
+                "MultiStreamShardDataset does not support DataLoader workers. "
+                "Use num_workers=0."
+            )
+        for rows in self._iter_batch_rows():
+            yield self._format_batch(rows)
+
+    def __len__(self):
+        return self._build_epoch_plan()["num_batches"]
+
+    def set_epoch(self, epoch: int):
+        self.epoch = epoch
+        self._cached_epoch = None
+        self._cached_plan = None
+
+
+__all__ = [
+    "DatasetShardSpan",
+    "FeatureShardStore",
+    "LogicalShardSpan",
+    "MultiStreamShardDataset",
+    "PairedRamLoadedShardDataset",
+    "concat_rows",
+    "copy_rows_to_ram",
+    "describe_file_state",
+    "feature_shard_dirs",
+    "inspect_feature_shards",
+    "load_feature_range_to_ram",
+    "load_feature_shard_dataset",
+    "maybe_append_split_suffix",
+    "resolve_feature_dataset_root",
+    "resolve_feature_dir_name",
+    "slice_rows",
+]

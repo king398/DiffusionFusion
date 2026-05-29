@@ -1,31 +1,59 @@
 import argparse
-from typing import Callable
+from typing import Callable, Dict, List, Optional, Tuple
 
 import torch
 import torch.nn as nn
-from JiT.model_jit import JiT_models
+
+from JiT.model_jit import JiT_models, StreamSpec
 
 
 class Denoiser(nn.Module):
+    """N-stream rectified-flow denoiser driven by `args.streams: list[StreamSpec]`.
+
+    Streams are dict-keyed throughout. Exactly one stream must have
+    role == "image_side"; semantic streams (DINO, EVA-02, …) co-denoise alongside
+    it. The structural CFG mask gates semantic→image-side cross-attention to zero
+    on the unconditional pass, matching the dual-stream behavior at N=2.
+    """
+
     def __init__(
         self,
         args: argparse.Namespace,
     ) -> None:
         super().__init__()
+        specs = getattr(args, "streams", None)
+        if not specs:
+            raise ValueError(
+                "Denoiser requires args.streams (a non-empty list of StreamSpec)."
+            )
+        specs = tuple(specs)
+
+        image_side = [s for s in specs if s.role == "image_side"]
+        if len(image_side) != 1:
+            raise ValueError(
+                "Denoiser requires exactly one stream with role == 'image_side'; "
+                f"got {len(image_side)} (names={[s.name for s in image_side]})."
+            )
+
+        self.specs: Tuple[StreamSpec, ...] = specs
+        self.specs_by_name: Dict[str, StreamSpec] = {s.name: s for s in specs}
+        self.stream_names: List[str] = [s.name for s in specs]
+        self.image_side_names: List[str] = [s.name for s in specs if s.role == "image_side"]
+        self.semantic_names: List[str] = [s.name for s in specs if s.role == "semantic"]
+        self.image_side_name: str = self.image_side_names[0]
+
+        fusion = getattr(args, "fusion", "pairwise")
         self.net: nn.Module = JiT_models[args.model](
-            input_size=args.latent_size,
-            in_channels=4,
+            specs=list(specs),
             num_classes=args.class_num,
             attn_drop=args.attn_dropout,
             proj_drop=args.proj_dropout,
-            dino_hidden_size=args.dino_hidden_size,
-            dino_patches=args.dino_patches,
+            input_size=args.latent_size,
+            fusion_mode=fusion,
         )
+
         self.latent_size: int = args.latent_size
-        self.latent_in_chans: int = 4
         self.num_classes: int = args.class_num
-        self.dino_patches = args.dino_patches
-        self.dino_hidden_size = args.dino_hidden_size
         self.label_drop_prob: float = args.label_drop_prob
         self.P_mean: float = args.P_mean
         self.P_std: float = args.P_std
@@ -34,125 +62,175 @@ class Denoiser(nn.Module):
             args, "inference_t_eps", min(self.t_eps, 1e-5)
         )
         self.noise_scale: float = args.noise_scale
-        self.latent_loss_weight: float = getattr(args, "latent_loss_weight", 1.0)
-        self.dino_loss_weight: float = getattr(args, "dino_loss_weight", 1.0)
-        dino_time_shift = getattr(args, "dino_time_shift", 0.0)
-        self.dino_time_shift: float = (
-            0.0 if dino_time_shift is None else float(dino_time_shift)
-        )
 
-        # ema
+        # EMA
         self.ema_decay1: float = args.ema_decay1
         self.ema_decay2: float = args.ema_decay2
-        self.ema_params1: list[torch.Tensor] | None = None
-        self.ema_params2: list[torch.Tensor] | None = None
+        self.ema_params1: Optional[List[torch.Tensor]] = None
+        self.ema_params2: Optional[List[torch.Tensor]] = None
 
         # generation hyper params
         self.method: str = args.sampling_method
         self.steps: int = args.num_sampling_steps
-        self.cfg_scale: float = args.cfg
-        self.cfg_interval: tuple[float, float] = (
-            args.interval_min, args.interval_max)
+        self.cfg_scale: float = args.cfg_scale if hasattr(args, "cfg_scale") else args.cfg
+        self.cfg_interval: Tuple[float, float] = (
+            args.interval_min,
+            args.interval_max,
+        )
+
+    # ----- structural mask ---------------------------------------------------
+
+    def _structural_uncond_mask(self) -> Dict[str, Dict[str, bool]]:
+        # Block every semantic→image-side direction on the unconditional pass.
+        return {
+            sem: {img: True for img in self.image_side_names}
+            for sem in self.semantic_names
+        }
+
+    # ----- label dropout -----------------------------------------------------
 
     def drop_labels(self, labels: torch.Tensor) -> torch.Tensor:
         labels_dropped, _ = self.drop_labels_for_cfg(labels)
         return labels_dropped
 
     @torch.compiler.disable
-    def drop_labels_for_cfg(self, labels: torch.Tensor) -> tuple[torch.Tensor, bool]:
+    def drop_labels_for_cfg(
+        self, labels: torch.Tensor
+    ) -> Tuple[torch.Tensor, Optional[Dict[str, Dict[str, bool]]]]:
         if self.label_drop_prob <= 0.0:
-            return labels, False
+            return labels, None
         if self.label_drop_prob >= 1.0:
-            return torch.full_like(labels, self.num_classes), True
+            return torch.full_like(labels, self.num_classes), self._structural_uncond_mask()
 
         # The structural mask is a Python branch, so sample it on CPU to avoid a
         # CUDA scalar sync on every training microbatch.
         drop = bool(torch.rand(()).item() < self.label_drop_prob)
         if not drop:
-            return labels, False
-        return torch.full_like(labels, self.num_classes), True
+            return labels, None
+        return torch.full_like(labels, self.num_classes), self._structural_uncond_mask()
 
-    def sample_t(self, n: int, device: torch.device | None = None) -> torch.Tensor:
+    # ----- time sampling -----------------------------------------------------
+
+    def sample_t(self, n: int, device: Optional[torch.device] = None) -> torch.Tensor:
         z = torch.randn(n, device=device) * self.P_std + self.P_mean
         return torch.sigmoid(z)
 
-    def dino_time(self, t: torch.Tensor) -> torch.Tensor:
-        if self.dino_time_shift == 0.0:
+    def stream_time(self, spec: StreamSpec, t: torch.Tensor) -> torch.Tensor:
+        if spec.time_shift == 0.0:
             return t
-
         eps = torch.finfo(t.dtype).eps
-        shifted = torch.sigmoid(torch.logit(t.clamp(eps, 1.0 - eps)) + self.dino_time_shift)
+        shifted = torch.sigmoid(torch.logit(t.clamp(eps, 1.0 - eps)) + spec.time_shift)
         shifted = torch.where(t <= 0.0, torch.zeros_like(shifted), shifted)
         shifted = torch.where(t >= 1.0, torch.ones_like(shifted), shifted)
         return shifted
 
+    def _per_stream_time(self, t: torch.Tensor) -> Dict[str, torch.Tensor]:
+        return {
+            name: self.stream_time(self.specs_by_name[name], t)
+            for name in self.stream_names
+        }
+
     @staticmethod
-    def _batch_time(value: float, batch_size: int, device: torch.device, ref: torch.Tensor) -> torch.Tensor:
-        return torch.full((batch_size,), value, device=device).view(-1, *([1] * (ref.ndim - 1)))
+    def _batch_time(
+        value: float, batch_size: int, device: torch.device, ref: torch.Tensor
+    ) -> torch.Tensor:
+        return torch.full((batch_size,), value, device=device).view(
+            -1, *([1] * (ref.ndim - 1))
+        )
+
+    # ----- network plumbing --------------------------------------------------
 
     def _net_forward(
         self,
-        z_latent: torch.Tensor,
-        z_dino: torch.Tensor,
+        z_dict: Dict[str, torch.Tensor],
         t: torch.Tensor,
         labels: torch.Tensor,
-        dino_t: torch.Tensor | None = None,
-        mask_dino_to_latent: bool = False,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+        stream_t_dict: Optional[Dict[str, torch.Tensor]] = None,
+        mask: Optional[Dict[str, Dict[str, bool]]] = None,
+    ) -> Dict[str, torch.Tensor]:
+        stream_t_flat = None
+        if stream_t_dict is not None:
+            stream_t_flat = {name: s.flatten() for name, s in stream_t_dict.items()}
         return self.net(
-            z_latent,
-            z_dino,
+            z_dict,
             t.flatten(),
             labels,
-            dino_t.flatten() if dino_t is not None else None,
-            mask_dino_to_latent=mask_dino_to_latent,
+            stream_t=stream_t_flat,
+            mask=mask,
         )
 
-    def forward(self, latent: torch.Tensor, dino: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+    # ----- training forward --------------------------------------------------
+
+    def forward(
+        self,
+        streams: Dict[str, torch.Tensor],
+        labels: torch.Tensor,
+    ) -> torch.Tensor:
         if self.training:
-            labels_dropped, mask_dino_to_latent = self.drop_labels_for_cfg(labels)
+            labels_dropped, mask = self.drop_labels_for_cfg(labels)
         else:
             labels_dropped = labels
-            mask_dino_to_latent = False
-        t = self.sample_t(latent.size(
-            0), device=latent.device).view(-1, *([1] * (latent.ndim - 1)))
-        dino_t = self.dino_time(t)
-        e_latent = torch.randn_like(latent) * self.noise_scale
-        e_dino = torch.randn_like(dino) * self.noise_scale
-        z_latent = t * latent + (1 - t) * e_latent
-        z_dino = dino_t * dino + (1 - dino_t) * e_dino
-        v_latent = (latent - z_latent) / (1 - t).clamp_min(self.t_eps)
-        v_dino = (dino - z_dino) / (1 - dino_t).clamp_min(self.t_eps)
+            mask = None
 
-        latent_pred, dino_pred = self._net_forward(
-            z_latent, z_dino, t, labels_dropped, dino_t, mask_dino_to_latent)
-        v_latent_pred = (latent_pred - z_latent) / \
-            (1 - t).clamp_min(self.t_eps)
-        v_dino_pred = (dino_pred - z_dino) / (1 - dino_t).clamp_min(self.t_eps)
+        ref = streams[self.image_side_name]
+        batch_size = ref.size(0)
+        device = ref.device
 
-        # L2 loss on v targets while keeping the network output in x-space.
-        loss_latent = ((v_latent - v_latent_pred) ** 2).mean()
-        loss_dino = ((v_dino - v_dino_pred) ** 2).mean()
-        loss = (
-            self.latent_loss_weight * loss_latent
-            + self.dino_loss_weight * loss_dino
+        t = self.sample_t(batch_size, device=device).view(
+            -1, *([1] * (ref.ndim - 1))
         )
 
+        stream_t_dict: Dict[str, torch.Tensor] = {}
+        z_dict: Dict[str, torch.Tensor] = {}
+        v_dict: Dict[str, torch.Tensor] = {}
+        for name in self.stream_names:
+            x = streams[name]
+            spec = self.specs_by_name[name]
+            stream_t_x = self.stream_time(spec, t)
+            noise = torch.randn_like(x) * self.noise_scale
+            z = stream_t_x * x + (1 - stream_t_x) * noise
+            v = (x - z) / (1 - stream_t_x).clamp_min(self.t_eps)
+            stream_t_dict[name] = stream_t_x
+            z_dict[name] = z
+            v_dict[name] = v
+
+        pred_dict = self._net_forward(
+            z_dict, t, labels_dropped, stream_t_dict, mask
+        )
+
+        loss = torch.zeros((), device=device, dtype=ref.dtype)
+        for name in self.stream_names:
+            spec = self.specs_by_name[name]
+            pred = pred_dict[name]
+            z = z_dict[name]
+            stream_t_x = stream_t_dict[name]
+            v_pred = (pred - z) / (1 - stream_t_x).clamp_min(self.t_eps)
+            v = v_dict[name]
+            stream_loss = ((v - v_pred) ** 2).mean()
+            loss = loss + spec.loss_weight * stream_loss
         return loss
 
+    # ----- generation --------------------------------------------------------
+
     @torch.no_grad()
-    def generate(self, labels: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    def generate(self, labels: torch.Tensor) -> Dict[str, torch.Tensor]:
         device = labels.device
         bsz = labels.size(0)
-        z_latent = self.noise_scale * \
-            torch.randn(bsz, self.latent_in_chans, self.latent_size,
-                        self.latent_size, device=device)
-        z_dino = self.noise_scale * \
-            torch.randn(bsz, self.dino_hidden_size,
-                        self.dino_patches, self.dino_patches, device=device)
+
+        z_dict: Dict[str, torch.Tensor] = {}
+        for name in self.stream_names:
+            spec = self.specs_by_name[name]
+            z_dict[name] = self.noise_scale * torch.randn(
+                bsz,
+                spec.feature_channels,
+                spec.feature_spatial,
+                spec.feature_spatial,
+                device=device,
+            )
+
         timesteps = torch.linspace(0.0, 1.0, self.steps + 1, device=device)
 
-        stepper: Callable[..., tuple[torch.Tensor, torch.Tensor]]
+        stepper: Callable[..., Dict[str, torch.Tensor]]
         if self.method == "euler":
             stepper = self._euler_step
         elif self.method == "heun":
@@ -160,23 +238,25 @@ class Denoiser(nn.Module):
         else:
             raise NotImplementedError
 
-        # ode
+        ref = z_dict[self.image_side_name]
+
         for i in range(self.steps - 1):
-            t = self._batch_time(float(timesteps[i]), bsz, device, z_latent)
-            t_next = self._batch_time(float(timesteps[i + 1]), bsz, device, z_latent)
-            dino_t = self.dino_time(t)
-            dino_t_next = self.dino_time(t_next)
-            z_latent, z_dino = stepper(
-                z_latent, z_dino, t, t_next, labels, dino_t, dino_t_next)
+            t = self._batch_time(float(timesteps[i]), bsz, device, ref)
+            t_next = self._batch_time(float(timesteps[i + 1]), bsz, device, ref)
+            stream_t_dict = self._per_stream_time(t)
+            stream_t_next_dict = self._per_stream_time(t_next)
+            z_dict = stepper(
+                z_dict, t, t_next, labels, stream_t_dict, stream_t_next_dict
+            )
+
         # Land on the model's guided x-prediction directly so the final step
         # is not shortened by the training-time velocity clamp near t=1.
-        z_latent, z_dino = self._forward_sample_xpred(
-            z_latent,
-            z_dino,
-            self._batch_time(float(timesteps[-2]), bsz, device, z_latent),
+        z_dict = self._forward_sample_xpred(
+            z_dict,
+            self._batch_time(float(timesteps[-2]), bsz, device, ref),
             labels,
         )
-        return z_latent, z_dino
+        return z_dict
 
     @torch.no_grad()
     def _cfg_scale_interval(self, t: torch.Tensor) -> torch.Tensor:
@@ -187,105 +267,97 @@ class Denoiser(nn.Module):
     @torch.no_grad()
     def _forward_sample_xpred(
         self,
-        z_latent: torch.Tensor,
-        z_dino: torch.Tensor,
+        z_dict: Dict[str, torch.Tensor],
         t: torch.Tensor,
         labels: torch.Tensor,
-        dino_t: torch.Tensor | None = None,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        if dino_t is None:
-            dino_t = self.dino_time(t)
-        # conditional
-        latent_cond, dino_cond = self._net_forward(z_latent, z_dino, t, labels, dino_t)
+        stream_t_dict: Optional[Dict[str, torch.Tensor]] = None,
+    ) -> Dict[str, torch.Tensor]:
+        if stream_t_dict is None:
+            stream_t_dict = self._per_stream_time(t)
 
-        # unconditional
-        latent_uncond, dino_uncond = self._net_forward(
-            z_latent,
-            z_dino,
+        cond = self._net_forward(z_dict, t, labels, stream_t_dict)
+        uncond = self._net_forward(
+            z_dict,
             t,
             torch.full_like(labels, self.num_classes),
-            dino_t,
-            mask_dino_to_latent=True,
+            stream_t_dict,
+            mask=self._structural_uncond_mask(),
         )
-        cfg_scale_interval = self._cfg_scale_interval(t)
-        latent_pred = latent_uncond + cfg_scale_interval * \
-            (latent_cond - latent_uncond)
-        dino_pred = dino_uncond + cfg_scale_interval * \
-            (dino_cond - dino_uncond)
-        return latent_pred, dino_pred
+        cfg = self._cfg_scale_interval(t)
+        return {
+            name: uncond[name] + cfg * (cond[name] - uncond[name])
+            for name in self.stream_names
+        }
 
     @torch.no_grad()
     def _forward_sample(
         self,
-        z_latent: torch.Tensor,
-        z_dino: torch.Tensor,
+        z_dict: Dict[str, torch.Tensor],
         t: torch.Tensor,
         labels: torch.Tensor,
-        dino_t: torch.Tensor | None = None,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        if dino_t is None:
-            dino_t = self.dino_time(t)
-        latent_pred, dino_pred = self._forward_sample_xpred(
-            z_latent, z_dino, t, labels, dino_t)
-        denom_lat = (1.0 - t).clamp_min(self.inference_t_eps)
-        denom_dino = (1.0 - dino_t).clamp_min(self.inference_t_eps)
-        v_latent = (latent_pred - z_latent) / denom_lat
-        v_dino = (dino_pred - z_dino) / denom_dino
-        return v_latent, v_dino
+        stream_t_dict: Optional[Dict[str, torch.Tensor]] = None,
+    ) -> Dict[str, torch.Tensor]:
+        if stream_t_dict is None:
+            stream_t_dict = self._per_stream_time(t)
+        pred = self._forward_sample_xpred(z_dict, t, labels, stream_t_dict)
+        v_dict: Dict[str, torch.Tensor] = {}
+        for name in self.stream_names:
+            stream_t_x = stream_t_dict[name]
+            denom = (1.0 - stream_t_x).clamp_min(self.inference_t_eps)
+            v_dict[name] = (pred[name] - z_dict[name]) / denom
+        return v_dict
 
     @torch.no_grad()
     def _euler_step(
         self,
-        z_latent: torch.Tensor,
-        z_dino: torch.Tensor,
+        z_dict: Dict[str, torch.Tensor],
         t: torch.Tensor,
         t_next: torch.Tensor,
         labels: torch.Tensor,
-        dino_t: torch.Tensor | None = None,
-        dino_t_next: torch.Tensor | None = None,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        if dino_t is None:
-            dino_t = self.dino_time(t)
-        if dino_t_next is None:
-            dino_t_next = self.dino_time(t_next)
-        v_latent, v_dino = self._forward_sample(z_latent, z_dino, t, labels, dino_t)
-        z_latent_next = z_latent + (t_next - t) * v_latent
-        z_dino_next = z_dino + (dino_t_next - dino_t) * v_dino
-        return z_latent_next, z_dino_next
+        stream_t_dict: Optional[Dict[str, torch.Tensor]] = None,
+        stream_t_next_dict: Optional[Dict[str, torch.Tensor]] = None,
+    ) -> Dict[str, torch.Tensor]:
+        if stream_t_dict is None:
+            stream_t_dict = self._per_stream_time(t)
+        if stream_t_next_dict is None:
+            stream_t_next_dict = self._per_stream_time(t_next)
+        v_dict = self._forward_sample(z_dict, t, labels, stream_t_dict)
+        z_next: Dict[str, torch.Tensor] = {}
+        for name in self.stream_names:
+            dt = stream_t_next_dict[name] - stream_t_dict[name]
+            z_next[name] = z_dict[name] + dt * v_dict[name]
+        return z_next
 
     @torch.no_grad()
     def _heun_step(
         self,
-        z_latent: torch.Tensor,
-        z_dino: torch.Tensor,
+        z_dict: Dict[str, torch.Tensor],
         t: torch.Tensor,
         t_next: torch.Tensor,
         labels: torch.Tensor,
-        dino_t: torch.Tensor | None = None,
-        dino_t_next: torch.Tensor | None = None,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        if dino_t is None:
-            dino_t = self.dino_time(t)
-        if dino_t_next is None:
-            dino_t_next = self.dino_time(t_next)
-        v_latent_t, v_dino_t = self._forward_sample(
-            z_latent, z_dino, t, labels, dino_t)
+        stream_t_dict: Optional[Dict[str, torch.Tensor]] = None,
+        stream_t_next_dict: Optional[Dict[str, torch.Tensor]] = None,
+    ) -> Dict[str, torch.Tensor]:
+        if stream_t_dict is None:
+            stream_t_dict = self._per_stream_time(t)
+        if stream_t_next_dict is None:
+            stream_t_next_dict = self._per_stream_time(t_next)
 
-        z_latent_euler = z_latent + (t_next - t) * v_latent_t
-        z_dino_euler = z_dino + (dino_t_next - dino_t) * v_dino_t
-        v_latent_next, v_dino_next = self._forward_sample(
-            z_latent_euler,
-            z_dino_euler,
-            t_next,
-            labels,
-            dino_t_next,
-        )
+        v_t = self._forward_sample(z_dict, t, labels, stream_t_dict)
+        z_euler: Dict[str, torch.Tensor] = {}
+        for name in self.stream_names:
+            dt = stream_t_next_dict[name] - stream_t_dict[name]
+            z_euler[name] = z_dict[name] + dt * v_t[name]
 
-        v_latent = 0.5 * (v_latent_t + v_latent_next)
-        v_dino = 0.5 * (v_dino_t + v_dino_next)
-        z_latent_next = z_latent + (t_next - t) * v_latent
-        z_dino_next = z_dino + (dino_t_next - dino_t) * v_dino
-        return z_latent_next, z_dino_next
+        v_next = self._forward_sample(z_euler, t_next, labels, stream_t_next_dict)
+        z_next: Dict[str, torch.Tensor] = {}
+        for name in self.stream_names:
+            dt = stream_t_next_dict[name] - stream_t_dict[name]
+            v_avg = 0.5 * (v_t[name] + v_next[name])
+            z_next[name] = z_dict[name] + dt * v_avg
+        return z_next
+
+    # ----- EMA ---------------------------------------------------------------
 
     @torch.no_grad()
     def update_ema(self) -> None:

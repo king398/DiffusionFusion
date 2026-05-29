@@ -1,0 +1,1557 @@
+[jit_eval_galoiz_testcd] host=gh042.hsn.cm.delta.internal.ncsa.edu start=2026-05-27T00:55:02-05:00
+[jit_eval_galoiz_testcd] ===== Test C (10K) starting =====
+[eval_galoiz] NPROC=2 NUM_IMAGES=10000 GEN_BSZ=64 CFG=2.9 interval=[0.1,1.0]
+[eval_galoiz] RESUME_DIR=/work/nvme/bgnp/msalunkhe/outputs/jit_dual_struct_cfg_mask_80ep
+[eval_galoiz] OUTPUT_DIR=/u/galoiz/DiffusionFusion-independent-backup/artifacts/eval_stage2_testc
+| distributed init (rank 0): env://, gpu 0| distributed init (rank 1): env://, gpu 1
+| distributed timeout: 7200s
+
+| distributed timeout: 7200s
+[00:55:21.804786] Job directory: /u/galoiz/DiffusionFusion-independent-backup/JiT
+[00:55:21.805013] Arguments:
+Namespace(model='JiT-Dual-B/2-4C-896',
+latent_size=32,
+dino_patches=16,
+attn_dropout=0.0,
+proj_dropout=0.0,
+decoder_checkpoint='/work/nvme/bgnp/msalunkhe/outputs/jit_decoder_small_gan_lower_noise/checkpoint-last.pth',
+decoder_checkpoint_key='model_ema',
+dino_hidden_size=768,
+epochs=200,
+warmup_epochs=5,
+batch_size=128,
+accum_iter=1,
+lr=None,
+blr=5e-05,
+min_lr=1e-05,
+lr_schedule='cosine',
+weight_decay=0.0,
+ema_decay1=0.9999,
+ema_decay2=0.9996,
+P_mean=-0.8,
+P_std=0.8,
+noise_scale=1.0,
+t_eps=0.05,
+inference_t_eps=1e-05,
+dino_time_shift=0.0,
+label_drop_prob=0.1,
+latent_loss_weight=1.0,
+dino_loss_weight=1.0,
+seed=0,
+start_epoch=0,
+pin_mem=True,
+ram_shard_prefetch=True,
+cuda_prefetch=True,
+ddp_bucket_cap_mb=100,
+ddp_broadcast_buffers=False,
+ddp_gradient_as_bucket_view=True,
+ddp_static_graph=True,
+ddp_find_unused_parameters=False,
+compile_model=True,
+sampling_method='heun',
+num_sampling_steps=50,
+cfg=2.9,
+interval_min=0.1,
+interval_max=1.0,
+num_images=10000,
+eval_freq=40,
+online_eval=False,
+evaluate_gen=True,
+gen_bsz=64,
+fid_stats_path='/u/galoiz/DiffusionFusion-independent-backup/JiT/fid_stats/jit_in256_stats.npz',
+data_path='/work/hdd/bgnp/msalunkhe/data/imagenet/',
+class_num=1000,
+dino_dir_name='imagenet256_dinov3_features',
+latent_dir_name='imagenet256_latents',
+streams_config=None,
+output_dir='/u/galoiz/DiffusionFusion-independent-backup/artifacts/eval_stage2_testc',
+resume='/work/nvme/bgnp/msalunkhe/outputs/jit_dual_struct_cfg_mask_80ep',
+save_last_freq=5,
+log_freq=5,
+use_wandb=True,
+wandb_project='jit',
+wandb_entity=None,
+wandb_run_name=None,
+wandb_mode='offline',
+wandb_eval_image_interval=10,
+eval_save_workers=4,
+device='cuda',
+world_size=2,
+local_rank=-1,
+dist_on_itp=False,
+dist_url='env://',
+dist_timeout_sec=7200,
+rank=0,
+gpu=0,
+distributed=True,
+dist_backend='nccl')
+[00:55:22.845189] Stream specs: ['latent(role=image_side, ch=4, sp=32, p=2)', 'dino(role=semantic, ch=768, sp=16, p=1)']
+[00:57:17.923349] RAM shard loading enabled using 118 logical shards from imagenet256_dinov3_features.
+[00:57:17.925652] Approx max per-rank shard working set: 16.33 GiB.
+[00:57:17.926607] RAM shard prefetch enabled: peak per-rank working set can temporarily reach about 32.66 GiB while the next shard is staged.
+[00:57:17.926802] Epoch 0 steps per rank: 4974 (samples/rank=636672, dropped_tail_per_rank=[7726, 98]).
+[00:57:17.927066] Gradient accumulation: 1 micro-batches/update -> 4974 optimizer updates per rank in epoch 0.
+[00:57:19.758212] Model = Denoiser(
+  (net): JiTMultiStream(
+    (t_embedder): TimestepEmbedder(
+      (mlp): Sequential(
+        (0): Linear(in_features=256, out_features=896, bias=True)
+        (1): SiLU()
+        (2): Linear(in_features=896, out_features=896, bias=True)
+      )
+    )
+    (y_embedder): LabelEmbedder(
+      (embedding_table): Embedding(1001, 896)
+    )
+    (embedders): ModuleDict(
+      (latent): BottleneckPatchEmbed(
+        (proj1): Conv2d(4, 128, kernel_size=(2, 2), stride=(2, 2), bias=False)
+        (proj2): Conv2d(128, 896, kernel_size=(1, 1), stride=(1, 1))
+      )
+      (dino): Linear(in_features=768, out_features=896, bias=True)
+    )
+    (in_context_posemb): ParameterDict(
+        (dino): Parameter containing: [torch.FloatTensor of size 1x32x896]
+        (latent): Parameter containing: [torch.FloatTensor of size 1x32x896]
+    )
+    (feat_rope): VisionRotaryEmbeddingFast()
+    (stream_blocks): ModuleDict(
+      (latent): ModuleList(
+        (0-11): 12 x DualStreamLocalBlock(
+          (norm1): RMSNorm()
+          (attn): StreamAttention(
+            (q_norm): RMSNorm()
+            (k_norm): RMSNorm()
+            (qkv): Linear(in_features=896, out_features=2688, bias=True)
+            (attn_drop): Dropout(p=0.0, inplace=False)
+            (proj): Linear(in_features=896, out_features=896, bias=True)
+            (proj_drop): Dropout(p=0.0, inplace=False)
+          )
+          (norm2): RMSNorm()
+          (mlp): SwiGLUFFN(
+            (w12): Linear(in_features=896, out_features=4778, bias=True)
+            (w3): Linear(in_features=2389, out_features=896, bias=True)
+            (ffn_dropout): Dropout(p=0.0, inplace=False)
+          )
+          (adaLN_modulation): Sequential(
+            (0): SiLU()
+            (1): Linear(in_features=896, out_features=5376, bias=True)
+          )
+        )
+      )
+      (dino): ModuleList(
+        (0-11): 12 x DualStreamLocalBlock(
+          (norm1): RMSNorm()
+          (attn): StreamAttention(
+            (q_norm): RMSNorm()
+            (k_norm): RMSNorm()
+            (qkv): Linear(in_features=896, out_features=2688, bias=True)
+            (attn_drop): Dropout(p=0.0, inplace=False)
+            (proj): Linear(in_features=896, out_features=896, bias=True)
+            (proj_drop): Dropout(p=0.0, inplace=False)
+          )
+          (norm2): RMSNorm()
+          (mlp): SwiGLUFFN(
+            (w12): Linear(in_features=896, out_features=4778, bias=True)
+            (w3): Linear(in_features=2389, out_features=896, bias=True)
+            (ffn_dropout): Dropout(p=0.0, inplace=False)
+          )
+          (adaLN_modulation): Sequential(
+            (0): SiLU()
+            (1): Linear(in_features=896, out_features=5376, bias=True)
+          )
+        )
+      )
+    )
+    (cross_fusion): ModuleDict(
+      (4): PairwiseCrossFusion(
+        (directions): ModuleDict(
+          (latent->dino): CrossFusionDirection(
+            (query_norm): RMSNorm()
+            (context_norm): RMSNorm()
+            (cross_attn): CrossStreamAttention(
+              (q_norm): RMSNorm()
+              (k_norm): RMSNorm()
+              (q_proj): Linear(in_features=896, out_features=896, bias=True)
+              (kv_proj): Linear(in_features=896, out_features=1792, bias=True)
+              (attn_drop): Dropout(p=0.0, inplace=False)
+              (proj): Linear(in_features=896, out_features=896, bias=True)
+              (proj_drop): Dropout(p=0.0, inplace=False)
+            )
+            (adaLN_modulation): Sequential(
+              (0): SiLU()
+              (1): Linear(in_features=896, out_features=2688, bias=True)
+            )
+          )
+          (dino->latent): CrossFusionDirection(
+            (query_norm): RMSNorm()
+            (context_norm): RMSNorm()
+            (cross_attn): CrossStreamAttention(
+              (q_norm): RMSNorm()
+              (k_norm): RMSNorm()
+              (q_proj): Linear(in_features=896, out_features=896, bias=True)
+              (kv_proj): Linear(in_features=896, out_features=1792, bias=True)
+              (attn_drop): Dropout(p=0.0, inplace=False)
+              (proj): Linear(in_features=896, out_features=896, bias=True)
+              (proj_drop): Dropout(p=0.0, inplace=False)
+            )
+            (adaLN_modulation): Sequential(
+              (0): SiLU()
+              (1): Linear(in_features=896, out_features=2688, bias=True)
+            )
+          )
+        )
+      )
+      (8): PairwiseCrossFusion(
+        (directions): ModuleDict(
+          (latent->dino): CrossFusionDirection(
+            (query_norm): RMSNorm()
+            (context_norm): RMSNorm()
+            (cross_attn): CrossStreamAttention(
+              (q_norm): RMSNorm()
+              (k_norm): RMSNorm()
+              (q_proj): Linear(in_features=896, out_features=896, bias=True)
+              (kv_proj): Linear(in_features=896, out_features=1792, bias=True)
+              (attn_drop): Dropout(p=0.0, inplace=False)
+              (proj): Linear(in_features=896, out_features=896, bias=True)
+              (proj_drop): Dropout(p=0.0, inplace=False)
+            )
+            (adaLN_modulation): Sequential(
+              (0): SiLU()
+              (1): Linear(in_features=896, out_features=2688, bias=True)
+            )
+          )
+          (dino->latent): CrossFusionDirection(
+            (query_norm): RMSNorm()
+            (context_norm): RMSNorm()
+            (cross_attn): CrossStreamAttention(
+              (q_norm): RMSNorm()
+              (k_norm): RMSNorm()
+              (q_proj): Linear(in_features=896, out_features=896, bias=True)
+              (kv_proj): Linear(in_features=896, out_features=1792, bias=True)
+              (attn_drop): Dropout(p=0.0, inplace=False)
+              (proj): Linear(in_features=896, out_features=896, bias=True)
+              (proj_drop): Dropout(p=0.0, inplace=False)
+            )
+            (adaLN_modulation): Sequential(
+              (0): SiLU()
+              (1): Linear(in_features=896, out_features=2688, bias=True)
+            )
+          )
+        )
+      )
+    )
+    (final_layers): ModuleDict(
+      (latent): FinalLayer(
+        (norm_final): RMSNorm()
+        (linear): Linear(in_features=896, out_features=16, bias=True)
+        (adaLN_modulation): Sequential(
+          (0): SiLU()
+          (1): Linear(in_features=896, out_features=1792, bias=True)
+        )
+      )
+      (dino): DinoFinalLayer(
+        (norm_final): RMSNorm()
+        (linear): Linear(in_features=896, out_features=768, bias=True)
+        (adaLN_modulation): Sequential(
+          (0): SiLU()
+          (1): Linear(in_features=896, out_features=1792, bias=True)
+        )
+      )
+    )
+  )
+)
+[00:57:19.761225] Number of trainable parameters: 376.418240M
+[00:57:25.658029] Rank 0: loaded decoder from /work/nvme/bgnp/msalunkhe/outputs/jit_decoder_small_gan_lower_noise/checkpoint-last.pth
+[00:57:25.659406] Base lr: 5.00e-05
+[00:57:25.659807] Actual lr: 5.00e-05
+[00:57:25.660109] Gradient accumulation steps: 1
+[00:57:25.660408] Effective batch size: 256
+[00:57:25.745712] torch.compile enabled; the first optimizer step may spend several minutes compiling before normal training logs appear.
+[00:57:27.426232] AdamW (
+Parameter Group 0
+    amsgrad: False
+    betas: (0.9, 0.95)
+    capturable: False
+    decoupled_weight_decay: True
+    differentiable: False
+    eps: 1e-08
+    foreach: None
+    fused: None
+    lr: 5e-05
+    maximize: False
+    weight_decay: 0.0
+
+Parameter Group 1
+    amsgrad: False
+    betas: (0.9, 0.95)
+    capturable: False
+    decoupled_weight_decay: True
+    differentiable: False
+    eps: 1e-08
+    foreach: None
+    fused: None
+    lr: 5e-05
+    maximize: False
+    weight_decay: 0.0
+)
+[00:57:30.271003] Detected dual-stream model checkpoint; applying remap_dual_to_multistream.
+[00:57:30.271963] Detected dual-stream model_ema1 checkpoint; applying remap_dual_to_multistream.
+[00:57:30.272626] Detected dual-stream model_ema2 checkpoint; applying remap_dual_to_multistream.
+[00:57:30.337638] Resumed checkpoint from /work/nvme/bgnp/msalunkhe/outputs/jit_dual_struct_cfg_mask_80ep
+[00:57:30.393469] Loaded optimizer state
+[00:57:30.394823] Evaluating checkpoint at 80 epoch
+[00:57:30.400602] Start evaluation at epoch 80
+[00:57:30.402172] Save to: /u/galoiz/DiffusionFusion-independent-backup/artifacts/eval_stage2_testc/heun-steps50-cfg2.9-interval0.1-1.0-image10000-res32
+[00:57:30.466657] Switch to ema
+[00:57:30.468268] Generation step 0/79
+[00:57:54.886564] Decoding step 0/79
+[00:57:55.221649] Generation step 1/79
+[00:58:18.802901] Decoding step 1/79
+[00:58:19.074646] Generation step 2/79
+[00:58:42.650763] Decoding step 2/79
+[00:58:42.898159] Generation step 3/79
+[00:59:06.503776] Decoding step 3/79
+[00:59:06.744326] Generation step 4/79
+[00:59:30.332866] Decoding step 4/79
+[00:59:30.574427] Generation step 5/79
+[00:59:54.188620] Decoding step 5/79
+[00:59:54.468933] Generation step 6/79
+[01:00:18.090434] Decoding step 6/79
+[01:00:18.335763] Generation step 7/79
+[01:00:41.961714] Decoding step 7/79
+[01:00:42.238407] Generation step 8/79
+[01:01:05.844493] Decoding step 8/79
+[01:01:06.077269] Generation step 9/79
+[01:01:29.705011] Decoding step 9/79
+[01:01:29.927418] Generation step 10/79
+[01:01:53.533168] Decoding step 10/79
+[01:01:53.802113] Generation step 11/79
+[01:02:17.436011] Decoding step 11/79
+[01:02:17.727452] Generation step 12/79
+[01:02:41.347705] Decoding step 12/79
+[01:02:41.595343] Generation step 13/79
+[01:03:05.223294] Decoding step 13/79
+[01:03:05.490332] Generation step 14/79
+[01:03:29.257816] Decoding step 14/79
+[01:03:29.498366] Generation step 15/79
+[01:03:53.140551] Decoding step 15/79
+[01:03:53.398746] Generation step 16/79
+[01:04:17.062541] Decoding step 16/79
+[01:04:17.327159] Generation step 17/79
+[01:04:40.952833] Decoding step 17/79
+[01:04:41.207073] Generation step 18/79
+[01:05:04.840899] Decoding step 18/79
+[01:05:05.088684] Generation step 19/79
+[01:05:28.719612] Decoding step 19/79
+[01:05:28.956837] Generation step 20/79
+[01:05:52.619382] Decoding step 20/79
+[01:05:52.872094] Generation step 21/79
+[01:06:16.522585] Decoding step 21/79
+[01:06:16.764870] Generation step 22/79
+[01:06:40.399089] Decoding step 22/79
+[01:06:40.660106] Generation step 23/79
+[01:07:04.288401] Decoding step 23/79
+[01:07:04.529259] Generation step 24/79
+[01:07:28.167121] Decoding step 24/79
+[01:07:28.447605] Generation step 25/79
+[01:07:52.077458] Decoding step 25/79
+[01:07:52.358914] Generation step 26/79
+[01:08:16.013610] Decoding step 26/79
+[01:08:16.265677] Generation step 27/79
+[01:08:39.936349] Decoding step 27/79
+[01:08:40.149738] Generation step 28/79
+[01:09:03.766181] Decoding step 28/79
+[01:09:04.002941] Generation step 29/79
+[01:09:27.631793] Decoding step 29/79
+[01:09:27.878817] Generation step 30/79
+[01:09:51.526120] Decoding step 30/79
+[01:09:51.793619] Generation step 31/79
+[01:10:15.447016] Decoding step 31/79
+[01:10:15.728073] Generation step 32/79
+[01:10:39.390020] Decoding step 32/79
+[01:10:39.647634] Generation step 33/79
+[01:11:03.364894] Decoding step 33/79
+[01:11:03.612757] Generation step 34/79
+[01:11:27.247687] Decoding step 34/79
+[01:11:27.519306] Generation step 35/79
+[01:11:51.159637] Decoding step 35/79
+[01:11:51.735542] Generation step 36/79
+[01:12:15.346848] Decoding step 36/79
+[01:12:15.602270] Generation step 37/79
+[01:12:39.257419] Decoding step 37/79
+[01:12:39.522973] Generation step 38/79
+[01:13:03.169364] Decoding step 38/79
+[01:13:03.443602] Generation step 39/79
+[01:13:27.148943] Decoding step 39/79
+[01:13:27.418378] Generation step 40/79
+[01:13:51.033161] Decoding step 40/79
+[01:13:51.293547] Generation step 41/79
+[01:14:14.924478] Decoding step 41/79
+[01:14:15.222184] Generation step 42/79
+[01:14:38.854272] Decoding step 42/79
+[01:14:39.121670] Generation step 43/79
+[01:15:02.771705] Decoding step 43/79
+[01:15:03.042834] Generation step 44/79
+[01:15:26.681077] Decoding step 44/79
+[01:15:26.914178] Generation step 45/79
+[01:15:50.530172] Decoding step 45/79
+[01:15:50.798051] Generation step 46/79
+[01:16:14.424604] Decoding step 46/79
+[01:16:14.682359] Generation step 47/79
+[01:16:38.310705] Decoding step 47/79
+[01:16:38.573870] Generation step 48/79
+[01:17:02.195618] Decoding step 48/79
+[01:17:02.469441] Generation step 49/79
+[01:17:26.085176] Decoding step 49/79
+[01:17:26.355159] Generation step 50/79
+[01:17:49.975226] Decoding step 50/79
+[01:17:50.234479] Generation step 51/79
+[01:18:13.858847] Decoding step 51/79
+[01:18:14.129381] Generation step 52/79
+[01:18:37.755039] Decoding step 52/79
+[01:18:37.999797] Generation step 53/79
+[01:19:01.615853] Decoding step 53/79
+[01:19:01.867899] Generation step 54/79
+[01:19:25.500855] Decoding step 54/79
+[01:19:25.769808] Generation step 55/79
+[01:19:49.394970] Decoding step 55/79
+[01:19:49.682967] Generation step 56/79
+[01:20:13.290391] Decoding step 56/79
+[01:20:13.576716] Generation step 57/79
+[01:20:37.200196] Decoding step 57/79
+[01:20:37.425504] Generation step 58/79
+[01:21:01.040872] Decoding step 58/79
+[01:21:01.308690] Generation step 59/79
+[01:21:24.943668] Decoding step 59/79
+[01:21:25.208492] Generation step 60/79
+[01:21:48.824459] Decoding step 60/79
+[01:21:49.111042] Generation step 61/79
+[01:22:12.714598] Decoding step 61/79
+[01:22:12.999124] Generation step 62/79
+[01:22:36.619400] Decoding step 62/79
+[01:22:36.890609] Generation step 63/79
+[01:23:00.558743] Decoding step 63/79
+[01:23:00.839870] Generation step 64/79
+[01:23:24.473765] Decoding step 64/79
+[01:23:24.729313] Generation step 65/79
+[01:23:48.347770] Decoding step 65/79
+[01:23:48.616342] Generation step 66/79
+[01:24:12.278756] Decoding step 66/79
+[01:24:12.560972] Generation step 67/79
+[01:24:36.187741] Decoding step 67/79
+[01:24:36.435121] Generation step 68/79
+[01:25:00.044251] Decoding step 68/79
+[01:25:00.313613] Generation step 69/79
+[01:25:23.930145] Decoding step 69/79
+[01:25:24.183953] Generation step 70/79
+[01:25:47.801837] Decoding step 70/79
+[01:25:48.094861] Generation step 71/79
+[01:26:11.716248] Decoding step 71/79
+[01:26:11.970850] Generation step 72/79
+[01:26:35.584449] Decoding step 72/79
+[01:26:35.845887] Generation step 73/79
+[01:26:59.464372] Decoding step 73/79
+[01:26:59.714126] Generation step 74/79
+[01:27:23.340590] Decoding step 74/79
+[01:27:23.597063] Generation step 75/79
+[01:27:47.215144] Decoding step 75/79
+[01:27:47.495005] Generation step 76/79
+[01:28:11.110278] Decoding step 76/79
+[01:28:11.403152] Generation step 77/79
+[01:28:35.021750] Decoding step 77/79
+[01:28:35.269090] Generation step 78/79
+[01:28:58.884496] Decoding step 78/79
+[01:29:20.433605] Switch back from ema
+[01:29:20.435986] [01:29:20.675078] [01:29:20.675870] [01:29:21.015004] [01:29:26.091783] [01:29:26.145221] [01:29:27.641363] [01:29:32.620109] FID: 6.7018, Inception Score: 133.4493
+[jit_eval_galoiz_testcd] ===== Test C (10K) completed at 2026-05-27T01:30:13-05:00 =====
+[jit_eval_galoiz_testcd] ===== Test D (50K) starting =====
+[eval_galoiz] NPROC=2 NUM_IMAGES=50000 GEN_BSZ=64 CFG=2.9 interval=[0.1,1.0]
+[eval_galoiz] RESUME_DIR=/work/nvme/bgnp/msalunkhe/outputs/jit_dual_struct_cfg_mask_80ep
+[eval_galoiz] OUTPUT_DIR=/u/galoiz/DiffusionFusion-independent-backup/artifacts/eval_stage2_testd
+| distributed init (rank 0): env://, gpu 0| distributed init (rank 1): env://, gpu 1
+
+| distributed timeout: 7200s| distributed timeout: 7200s
+
+[01:30:38.606761] Job directory: /u/galoiz/DiffusionFusion-independent-backup/JiT
+[01:30:38.606981] Arguments:
+Namespace(model='JiT-Dual-B/2-4C-896',
+latent_size=32,
+dino_patches=16,
+attn_dropout=0.0,
+proj_dropout=0.0,
+decoder_checkpoint='/work/nvme/bgnp/msalunkhe/outputs/jit_decoder_small_gan_lower_noise/checkpoint-last.pth',
+decoder_checkpoint_key='model_ema',
+dino_hidden_size=768,
+epochs=200,
+warmup_epochs=5,
+batch_size=128,
+accum_iter=1,
+lr=None,
+blr=5e-05,
+min_lr=1e-05,
+lr_schedule='cosine',
+weight_decay=0.0,
+ema_decay1=0.9999,
+ema_decay2=0.9996,
+P_mean=-0.8,
+P_std=0.8,
+noise_scale=1.0,
+t_eps=0.05,
+inference_t_eps=1e-05,
+dino_time_shift=0.0,
+label_drop_prob=0.1,
+latent_loss_weight=1.0,
+dino_loss_weight=1.0,
+seed=0,
+start_epoch=0,
+pin_mem=True,
+ram_shard_prefetch=True,
+cuda_prefetch=True,
+ddp_bucket_cap_mb=100,
+ddp_broadcast_buffers=False,
+ddp_gradient_as_bucket_view=True,
+ddp_static_graph=True,
+ddp_find_unused_parameters=False,
+compile_model=True,
+sampling_method='heun',
+num_sampling_steps=50,
+cfg=2.9,
+interval_min=0.1,
+interval_max=1.0,
+num_images=50000,
+eval_freq=40,
+online_eval=False,
+evaluate_gen=True,
+gen_bsz=64,
+fid_stats_path='/u/galoiz/DiffusionFusion-independent-backup/JiT/fid_stats/jit_in256_stats.npz',
+data_path='/work/hdd/bgnp/msalunkhe/data/imagenet/',
+class_num=1000,
+dino_dir_name='imagenet256_dinov3_features',
+latent_dir_name='imagenet256_latents',
+streams_config=None,
+output_dir='/u/galoiz/DiffusionFusion-independent-backup/artifacts/eval_stage2_testd',
+resume='/work/nvme/bgnp/msalunkhe/outputs/jit_dual_struct_cfg_mask_80ep',
+save_last_freq=5,
+log_freq=5,
+use_wandb=True,
+wandb_project='jit',
+wandb_entity=None,
+wandb_run_name=None,
+wandb_mode='offline',
+wandb_eval_image_interval=10,
+eval_save_workers=4,
+device='cuda',
+world_size=2,
+local_rank=-1,
+dist_on_itp=False,
+dist_url='env://',
+dist_timeout_sec=7200,
+rank=0,
+gpu=0,
+distributed=True,
+dist_backend='nccl')
+[01:30:39.569529] Stream specs: ['latent(role=image_side, ch=4, sp=32, p=2)', 'dino(role=semantic, ch=768, sp=16, p=1)']
+[01:32:48.711907] RAM shard loading enabled using 118 logical shards from imagenet256_dinov3_features.
+[01:32:48.712853] Approx max per-rank shard working set: 16.33 GiB.
+[01:32:48.713376] RAM shard prefetch enabled: peak per-rank working set can temporarily reach about 32.66 GiB while the next shard is staged.
+[01:32:48.713581] Epoch 0 steps per rank: 4974 (samples/rank=636672, dropped_tail_per_rank=[7726, 98]).
+[01:32:48.713884] Gradient accumulation: 1 micro-batches/update -> 4974 optimizer updates per rank in epoch 0.
+[01:32:50.542453] Model = Denoiser(
+  (net): JiTMultiStream(
+    (t_embedder): TimestepEmbedder(
+      (mlp): Sequential(
+        (0): Linear(in_features=256, out_features=896, bias=True)
+        (1): SiLU()
+        (2): Linear(in_features=896, out_features=896, bias=True)
+      )
+    )
+    (y_embedder): LabelEmbedder(
+      (embedding_table): Embedding(1001, 896)
+    )
+    (embedders): ModuleDict(
+      (latent): BottleneckPatchEmbed(
+        (proj1): Conv2d(4, 128, kernel_size=(2, 2), stride=(2, 2), bias=False)
+        (proj2): Conv2d(128, 896, kernel_size=(1, 1), stride=(1, 1))
+      )
+      (dino): Linear(in_features=768, out_features=896, bias=True)
+    )
+    (in_context_posemb): ParameterDict(
+        (dino): Parameter containing: [torch.FloatTensor of size 1x32x896]
+        (latent): Parameter containing: [torch.FloatTensor of size 1x32x896]
+    )
+    (feat_rope): VisionRotaryEmbeddingFast()
+    (stream_blocks): ModuleDict(
+      (latent): ModuleList(
+        (0-11): 12 x DualStreamLocalBlock(
+          (norm1): RMSNorm()
+          (attn): StreamAttention(
+            (q_norm): RMSNorm()
+            (k_norm): RMSNorm()
+            (qkv): Linear(in_features=896, out_features=2688, bias=True)
+            (attn_drop): Dropout(p=0.0, inplace=False)
+            (proj): Linear(in_features=896, out_features=896, bias=True)
+            (proj_drop): Dropout(p=0.0, inplace=False)
+          )
+          (norm2): RMSNorm()
+          (mlp): SwiGLUFFN(
+            (w12): Linear(in_features=896, out_features=4778, bias=True)
+            (w3): Linear(in_features=2389, out_features=896, bias=True)
+            (ffn_dropout): Dropout(p=0.0, inplace=False)
+          )
+          (adaLN_modulation): Sequential(
+            (0): SiLU()
+            (1): Linear(in_features=896, out_features=5376, bias=True)
+          )
+        )
+      )
+      (dino): ModuleList(
+        (0-11): 12 x DualStreamLocalBlock(
+          (norm1): RMSNorm()
+          (attn): StreamAttention(
+            (q_norm): RMSNorm()
+            (k_norm): RMSNorm()
+            (qkv): Linear(in_features=896, out_features=2688, bias=True)
+            (attn_drop): Dropout(p=0.0, inplace=False)
+            (proj): Linear(in_features=896, out_features=896, bias=True)
+            (proj_drop): Dropout(p=0.0, inplace=False)
+          )
+          (norm2): RMSNorm()
+          (mlp): SwiGLUFFN(
+            (w12): Linear(in_features=896, out_features=4778, bias=True)
+            (w3): Linear(in_features=2389, out_features=896, bias=True)
+            (ffn_dropout): Dropout(p=0.0, inplace=False)
+          )
+          (adaLN_modulation): Sequential(
+            (0): SiLU()
+            (1): Linear(in_features=896, out_features=5376, bias=True)
+          )
+        )
+      )
+    )
+    (cross_fusion): ModuleDict(
+      (4): PairwiseCrossFusion(
+        (directions): ModuleDict(
+          (latent->dino): CrossFusionDirection(
+            (query_norm): RMSNorm()
+            (context_norm): RMSNorm()
+            (cross_attn): CrossStreamAttention(
+              (q_norm): RMSNorm()
+              (k_norm): RMSNorm()
+              (q_proj): Linear(in_features=896, out_features=896, bias=True)
+              (kv_proj): Linear(in_features=896, out_features=1792, bias=True)
+              (attn_drop): Dropout(p=0.0, inplace=False)
+              (proj): Linear(in_features=896, out_features=896, bias=True)
+              (proj_drop): Dropout(p=0.0, inplace=False)
+            )
+            (adaLN_modulation): Sequential(
+              (0): SiLU()
+              (1): Linear(in_features=896, out_features=2688, bias=True)
+            )
+          )
+          (dino->latent): CrossFusionDirection(
+            (query_norm): RMSNorm()
+            (context_norm): RMSNorm()
+            (cross_attn): CrossStreamAttention(
+              (q_norm): RMSNorm()
+              (k_norm): RMSNorm()
+              (q_proj): Linear(in_features=896, out_features=896, bias=True)
+              (kv_proj): Linear(in_features=896, out_features=1792, bias=True)
+              (attn_drop): Dropout(p=0.0, inplace=False)
+              (proj): Linear(in_features=896, out_features=896, bias=True)
+              (proj_drop): Dropout(p=0.0, inplace=False)
+            )
+            (adaLN_modulation): Sequential(
+              (0): SiLU()
+              (1): Linear(in_features=896, out_features=2688, bias=True)
+            )
+          )
+        )
+      )
+      (8): PairwiseCrossFusion(
+        (directions): ModuleDict(
+          (latent->dino): CrossFusionDirection(
+            (query_norm): RMSNorm()
+            (context_norm): RMSNorm()
+            (cross_attn): CrossStreamAttention(
+              (q_norm): RMSNorm()
+              (k_norm): RMSNorm()
+              (q_proj): Linear(in_features=896, out_features=896, bias=True)
+              (kv_proj): Linear(in_features=896, out_features=1792, bias=True)
+              (attn_drop): Dropout(p=0.0, inplace=False)
+              (proj): Linear(in_features=896, out_features=896, bias=True)
+              (proj_drop): Dropout(p=0.0, inplace=False)
+            )
+            (adaLN_modulation): Sequential(
+              (0): SiLU()
+              (1): Linear(in_features=896, out_features=2688, bias=True)
+            )
+          )
+          (dino->latent): CrossFusionDirection(
+            (query_norm): RMSNorm()
+            (context_norm): RMSNorm()
+            (cross_attn): CrossStreamAttention(
+              (q_norm): RMSNorm()
+              (k_norm): RMSNorm()
+              (q_proj): Linear(in_features=896, out_features=896, bias=True)
+              (kv_proj): Linear(in_features=896, out_features=1792, bias=True)
+              (attn_drop): Dropout(p=0.0, inplace=False)
+              (proj): Linear(in_features=896, out_features=896, bias=True)
+              (proj_drop): Dropout(p=0.0, inplace=False)
+            )
+            (adaLN_modulation): Sequential(
+              (0): SiLU()
+              (1): Linear(in_features=896, out_features=2688, bias=True)
+            )
+          )
+        )
+      )
+    )
+    (final_layers): ModuleDict(
+      (latent): FinalLayer(
+        (norm_final): RMSNorm()
+        (linear): Linear(in_features=896, out_features=16, bias=True)
+        (adaLN_modulation): Sequential(
+          (0): SiLU()
+          (1): Linear(in_features=896, out_features=1792, bias=True)
+        )
+      )
+      (dino): DinoFinalLayer(
+        (norm_final): RMSNorm()
+        (linear): Linear(in_features=896, out_features=768, bias=True)
+        (adaLN_modulation): Sequential(
+          (0): SiLU()
+          (1): Linear(in_features=896, out_features=1792, bias=True)
+        )
+      )
+    )
+  )
+)
+[01:32:50.547077] Number of trainable parameters: 376.418240M
+[01:32:55.755767] Rank 0: loaded decoder from /work/nvme/bgnp/msalunkhe/outputs/jit_decoder_small_gan_lower_noise/checkpoint-last.pth
+[01:32:55.756252] Base lr: 5.00e-05
+[01:32:55.756832] Actual lr: 5.00e-05
+[01:32:55.757005] Gradient accumulation steps: 1
+[01:32:55.757181] Effective batch size: 256
+[01:32:55.803784] torch.compile enabled; the first optimizer step may spend several minutes compiling before normal training logs appear.
+[01:32:56.730275] AdamW (
+Parameter Group 0
+    amsgrad: False
+    betas: (0.9, 0.95)
+    capturable: False
+    decoupled_weight_decay: True
+    differentiable: False
+    eps: 1e-08
+    foreach: None
+    fused: None
+    lr: 5e-05
+    maximize: False
+    weight_decay: 0.0
+
+Parameter Group 1
+    amsgrad: False
+    betas: (0.9, 0.95)
+    capturable: False
+    decoupled_weight_decay: True
+    differentiable: False
+    eps: 1e-08
+    foreach: None
+    fused: None
+    lr: 5e-05
+    maximize: False
+    weight_decay: 0.0
+)
+[01:32:58.306792] Detected dual-stream model checkpoint; applying remap_dual_to_multistream.
+[01:32:58.307642] Detected dual-stream model_ema1 checkpoint; applying remap_dual_to_multistream.
+[01:32:58.308542] Detected dual-stream model_ema2 checkpoint; applying remap_dual_to_multistream.
+[01:32:58.396700] Resumed checkpoint from /work/nvme/bgnp/msalunkhe/outputs/jit_dual_struct_cfg_mask_80ep
+[01:32:58.463414] Loaded optimizer state
+[01:32:58.465286] Evaluating checkpoint at 80 epoch
+[01:32:58.470905] Start evaluation at epoch 80
+[01:32:58.472456] Save to: /u/galoiz/DiffusionFusion-independent-backup/artifacts/eval_stage2_testd/heun-steps50-cfg2.9-interval0.1-1.0-image50000-res32
+[01:32:58.504440] Switch to ema
+[01:32:58.506411] Generation step 0/391
+[01:33:22.296993] Decoding step 0/391
+[01:33:22.588161] Generation step 1/391
+[01:33:46.187946] Decoding step 1/391
+[01:33:46.471815] Generation step 2/391
+[01:34:10.067953] Decoding step 2/391
+[01:34:10.324075] Generation step 3/391
+[01:34:33.920755] Decoding step 3/391
+[01:34:34.149674] Generation step 4/391
+[01:34:57.757107] Decoding step 4/391
+[01:34:58.033838] Generation step 5/391
+[01:35:21.712740] Decoding step 5/391
+[01:35:22.000497] Generation step 6/391
+[01:35:45.603857] Decoding step 6/391
+[01:35:45.863741] Generation step 7/391
+[01:36:09.466811] Decoding step 7/391
+[01:36:09.752382] Generation step 8/391
+[01:36:33.364212] Decoding step 8/391
+[01:36:33.648891] Generation step 9/391
+[01:36:57.267655] Decoding step 9/391
+[01:36:57.510900] Generation step 10/391
+[01:37:21.133607] Decoding step 10/391
+[01:37:21.394893] Generation step 11/391
+[01:37:45.003491] Decoding step 11/391
+[01:37:45.275935] Generation step 12/391
+[01:38:08.920347] Decoding step 12/391
+[01:38:09.169336] Generation step 13/391
+[01:38:32.792748] Decoding step 13/391
+[01:38:33.043631] Generation step 14/391
+[01:38:56.662349] Decoding step 14/391
+[01:38:56.889129] Generation step 15/391
+[01:39:20.504875] Decoding step 15/391
+[01:39:20.746951] Generation step 16/391
+[01:39:44.550612] Decoding step 16/391
+[01:39:44.829126] Generation step 17/391
+[01:40:08.442662] Decoding step 17/391
+[01:40:08.684544] Generation step 18/391
+[01:40:32.333584] Decoding step 18/391
+[01:40:32.587745] Generation step 19/391
+[01:40:56.216878] Decoding step 19/391
+[01:40:56.437410] Generation step 20/391
+[01:41:20.233085] Decoding step 20/391
+[01:41:20.497998] Generation step 21/391
+[01:41:44.125065] Decoding step 21/391
+[01:41:44.361274] Generation step 22/391
+[01:42:07.987853] Decoding step 22/391
+[01:42:08.203962] Generation step 23/391
+[01:42:31.830085] Decoding step 23/391
+[01:42:32.091912] Generation step 24/391
+[01:42:55.716798] Decoding step 24/391
+[01:42:55.948169] Generation step 25/391
+[01:43:19.680070] Decoding step 25/391
+[01:43:19.949854] Generation step 26/391
+[01:43:43.585473] Decoding step 26/391
+[01:43:43.818675] Generation step 27/391
+[01:44:07.441460] Decoding step 27/391
+[01:44:07.678299] Generation step 28/391
+[01:44:31.311168] Decoding step 28/391
+[01:44:31.573765] Generation step 29/391
+[01:44:55.203355] Decoding step 29/391
+[01:44:55.481775] Generation step 30/391
+[01:45:19.116192] Decoding step 30/391
+[01:45:19.390735] Generation step 31/391
+[01:45:43.026268] Decoding step 31/391
+[01:45:43.327128] Generation step 32/391
+[01:46:06.969863] Decoding step 32/391
+[01:46:07.202632] Generation step 33/391
+[01:46:30.834875] Decoding step 33/391
+[01:46:31.062325] Generation step 34/391
+[01:46:54.697008] Decoding step 34/391
+[01:46:54.952474] Generation step 35/391
+[01:47:18.597256] Decoding step 35/391
+[01:47:18.861136] Generation step 36/391
+[01:47:42.509596] Decoding step 36/391
+[01:47:42.773485] Generation step 37/391
+[01:48:06.415656] Decoding step 37/391
+[01:48:06.695078] Generation step 38/391
+[01:48:30.335693] Decoding step 38/391
+[01:48:30.611322] Generation step 39/391
+[01:48:54.275181] Decoding step 39/391
+[01:48:54.528408] Generation step 40/391
+[01:49:18.165110] Decoding step 40/391
+[01:49:18.425207] Generation step 41/391
+[01:49:42.061026] Decoding step 41/391
+[01:49:42.319188] Generation step 42/391
+[01:50:05.954519] Decoding step 42/391
+[01:50:06.198730] Generation step 43/391
+[01:50:29.821013] Decoding step 43/391
+[01:50:30.064825] Generation step 44/391
+[01:50:53.682327] Decoding step 44/391
+[01:50:53.947040] Generation step 45/391
+[01:51:17.572839] Decoding step 45/391
+[01:51:17.837377] Generation step 46/391
+[01:51:41.452540] Decoding step 46/391
+[01:51:41.690630] Generation step 47/391
+[01:52:05.319921] Decoding step 47/391
+[01:52:05.570539] Generation step 48/391
+[01:52:29.205505] Decoding step 48/391
+[01:52:29.435417] Generation step 49/391
+[01:52:53.061288] Decoding step 49/391
+[01:52:53.332406] Generation step 50/391
+[01:53:16.967719] Decoding step 50/391
+[01:53:17.230103] Generation step 51/391
+[01:53:40.864330] Decoding step 51/391
+[01:53:41.122171] Generation step 52/391
+[01:54:04.834847] Decoding step 52/391
+[01:54:05.063115] Generation step 53/391
+[01:54:28.697463] Decoding step 53/391
+[01:54:28.947375] Generation step 54/391
+[01:54:52.573299] Decoding step 54/391
+[01:54:52.827864] Generation step 55/391
+[01:55:16.461282] Decoding step 55/391
+[01:55:16.759697] Generation step 56/391
+[01:55:40.392207] Decoding step 56/391
+[01:55:40.660603] Generation step 57/391
+[01:56:04.284299] Decoding step 57/391
+[01:56:04.531596] Generation step 58/391
+[01:56:28.166368] Decoding step 58/391
+[01:56:28.451093] Generation step 59/391
+[01:56:52.086003] Decoding step 59/391
+[01:56:52.358108] Generation step 60/391
+[01:57:15.979446] Decoding step 60/391
+[01:57:16.259305] Generation step 61/391
+[01:57:39.878329] Decoding step 61/391
+[01:57:40.146642] Generation step 62/391
+[01:58:03.765765] Decoding step 62/391
+[01:58:04.009793] Generation step 63/391
+[01:58:27.647924] Decoding step 63/391
+[01:58:27.901326] Generation step 64/391
+[01:58:51.572980] Decoding step 64/391
+[01:58:51.827211] Generation step 65/391
+[01:59:15.459206] Decoding step 65/391
+[01:59:15.709159] Generation step 66/391
+[01:59:39.346306] Decoding step 66/391
+[01:59:39.613533] Generation step 67/391
+[02:00:03.238132] Decoding step 67/391
+[02:00:03.486329] Generation step 68/391
+[02:00:27.110677] Decoding step 68/391
+[02:00:27.346988] Generation step 69/391
+[02:00:50.965611] Decoding step 69/391
+[02:00:51.206603] Generation step 70/391
+[02:01:14.830019] Decoding step 70/391
+[02:01:15.086896] Generation step 71/391
+[02:01:38.709206] Decoding step 71/391
+[02:01:38.956737] Generation step 72/391
+[02:02:02.605711] Decoding step 72/391
+[02:02:02.829991] Generation step 73/391
+[02:02:26.476749] Decoding step 73/391
+[02:02:26.731568] Generation step 74/391
+[02:02:50.376152] Decoding step 74/391
+[02:02:50.633539] Generation step 75/391
+[02:03:14.272360] Decoding step 75/391
+[02:03:14.531350] Generation step 76/391
+[02:03:38.166575] Decoding step 76/391
+[02:03:38.452541] Generation step 77/391
+[02:04:02.079247] Decoding step 77/391
+[02:04:02.318289] Generation step 78/391
+[02:04:25.963934] Decoding step 78/391
+[02:04:26.203986] Generation step 79/391
+[02:04:49.840791] Decoding step 79/391
+[02:04:50.092576] Generation step 80/391
+[02:05:13.735925] Decoding step 80/391
+[02:05:13.981880] Generation step 81/391
+[02:05:37.605074] Decoding step 81/391
+[02:05:37.857131] Generation step 82/391
+[02:06:01.492665] Decoding step 82/391
+[02:06:01.743424] Generation step 83/391
+[02:06:25.366507] Decoding step 83/391
+[02:06:25.600705] Generation step 84/391
+[02:06:49.238354] Decoding step 84/391
+[02:06:49.485150] Generation step 85/391
+[02:07:13.107628] Decoding step 85/391
+[02:07:13.373665] Generation step 86/391
+[02:07:37.028075] Decoding step 86/391
+[02:07:37.297323] Generation step 87/391
+[02:08:00.934477] Decoding step 87/391
+[02:08:01.178742] Generation step 88/391
+[02:08:24.813878] Decoding step 88/391
+[02:08:25.063205] Generation step 89/391
+[02:08:48.692108] Decoding step 89/391
+[02:08:48.937499] Generation step 90/391
+[02:09:12.590660] Decoding step 90/391
+[02:09:12.835748] Generation step 91/391
+[02:09:36.470145] Decoding step 91/391
+[02:09:36.724800] Generation step 92/391
+[02:10:00.372908] Decoding step 92/391
+[02:10:00.621260] Generation step 93/391
+[02:10:24.278807] Decoding step 93/391
+[02:10:24.538565] Generation step 94/391
+[02:10:48.173626] Decoding step 94/391
+[02:10:48.429316] Generation step 95/391
+[02:11:12.065014] Decoding step 95/391
+[02:11:12.340703] Generation step 96/391
+[02:11:35.978341] Decoding step 96/391
+[02:11:36.243736] Generation step 97/391
+[02:11:59.886032] Decoding step 97/391
+[02:12:00.119200] Generation step 98/391
+[02:12:23.752590] Decoding step 98/391
+[02:12:23.984574] Generation step 99/391
+[02:12:47.643345] Decoding step 99/391
+[02:12:47.876653] Generation step 100/391
+[02:13:11.557499] Decoding step 100/391
+[02:13:11.831653] Generation step 101/391
+[02:13:35.523265] Decoding step 101/391
+[02:13:35.798327] Generation step 102/391
+[02:13:59.461888] Decoding step 102/391
+[02:13:59.704148] Generation step 103/391
+[02:14:23.364015] Decoding step 103/391
+[02:14:23.633147] Generation step 104/391
+[02:14:47.286612] Decoding step 104/391
+[02:14:47.526229] Generation step 105/391
+[02:15:11.180875] Decoding step 105/391
+[02:15:11.434315] Generation step 106/391
+[02:15:35.102983] Decoding step 106/391
+[02:15:35.348696] Generation step 107/391
+[02:15:58.989177] Decoding step 107/391
+[02:15:59.224972] Generation step 108/391
+[02:16:22.880415] Decoding step 108/391
+[02:16:23.111698] Generation step 109/391
+[02:16:46.775789] Decoding step 109/391
+[02:16:47.033230] Generation step 110/391
+[02:17:10.712278] Decoding step 110/391
+[02:17:10.971990] Generation step 111/391
+[02:17:34.636193] Decoding step 111/391
+[02:17:34.896561] Generation step 112/391
+[02:17:58.574677] Decoding step 112/391
+[02:17:58.816317] Generation step 113/391
+[02:18:22.487437] Decoding step 113/391
+[02:18:22.713068] Generation step 114/391
+[02:18:46.373054] Decoding step 114/391
+[02:18:46.600195] Generation step 115/391
+[02:19:10.267214] Decoding step 115/391
+[02:19:10.516726] Generation step 116/391
+[02:19:34.193006] Decoding step 116/391
+[02:19:34.450971] Generation step 117/391
+[02:19:58.124636] Decoding step 117/391
+[02:19:58.375396] Generation step 118/391
+[02:20:22.041171] Decoding step 118/391
+[02:20:22.274638] Generation step 119/391
+[02:20:45.935714] Decoding step 119/391
+[02:20:46.181894] Generation step 120/391
+[02:21:09.861251] Decoding step 120/391
+[02:21:10.149277] Generation step 121/391
+[02:21:33.810732] Decoding step 121/391
+[02:21:34.092875] Generation step 122/391
+[02:21:57.769067] Decoding step 122/391
+[02:21:58.024312] Generation step 123/391
+[02:22:21.707811] Decoding step 123/391
+[02:22:21.988490] Generation step 124/391
+[02:22:45.663353] Decoding step 124/391
+[02:22:45.937523] Generation step 125/391
+[02:23:09.607683] Decoding step 125/391
+[02:23:09.909298] Generation step 126/391
+[02:23:33.606408] Decoding step 126/391
+[02:23:33.905283] Generation step 127/391
+[02:23:57.585246] Decoding step 127/391
+[02:23:57.859952] Generation step 128/391
+[02:24:21.541281] Decoding step 128/391
+[02:24:21.781865] Generation step 129/391
+[02:24:45.472063] Decoding step 129/391
+[02:24:45.717712] Generation step 130/391
+[02:25:09.404261] Decoding step 130/391
+[02:25:09.675607] Generation step 131/391
+[02:25:33.331529] Decoding step 131/391
+[02:25:33.586201] Generation step 132/391
+[02:25:57.238033] Decoding step 132/391
+[02:25:57.482719] Generation step 133/391
+[02:26:21.150417] Decoding step 133/391
+[02:26:21.387940] Generation step 134/391
+[02:26:45.063437] Decoding step 134/391
+[02:26:45.294628] Generation step 135/391
+[02:27:08.980048] Decoding step 135/391
+[02:27:09.240234] Generation step 136/391
+[02:27:32.912960] Decoding step 136/391
+[02:27:33.169236] Generation step 137/391
+[02:27:56.839082] Decoding step 137/391
+[02:27:57.082894] Generation step 138/391
+[02:28:20.773367] Decoding step 138/391
+[02:28:21.029970] Generation step 139/391
+[02:28:44.681300] Decoding step 139/391
+[02:28:44.931502] Generation step 140/391
+[02:29:08.618708] Decoding step 140/391
+[02:29:08.898507] Generation step 141/391
+[02:29:32.526482] Decoding step 141/391
+[02:29:32.804715] Generation step 142/391
+[02:29:56.472844] Decoding step 142/391
+[02:29:56.709218] Generation step 143/391
+[02:30:20.368572] Decoding step 143/391
+[02:30:20.608550] Generation step 144/391
+[02:30:44.278682] Decoding step 144/391
+[02:30:44.506488] Generation step 145/391
+[02:31:08.166991] Decoding step 145/391
+[02:31:08.444565] Generation step 146/391
+[02:31:32.114843] Decoding step 146/391
+[02:31:32.361871] Generation step 147/391
+[02:31:56.024907] Decoding step 147/391
+[02:31:56.261536] Generation step 148/391
+[02:32:19.941695] Decoding step 148/391
+[02:32:20.193056] Generation step 149/391
+[02:32:43.858003] Decoding step 149/391
+[02:32:44.102816] Generation step 150/391
+[02:33:07.783101] Decoding step 150/391
+[02:33:08.041238] Generation step 151/391
+[02:33:31.693130] Decoding step 151/391
+[02:33:31.961992] Generation step 152/391
+[02:33:55.608044] Decoding step 152/391
+[02:33:55.862371] Generation step 153/391
+[02:34:19.532985] Decoding step 153/391
+[02:34:19.803158] Generation step 154/391
+[02:34:43.483912] Decoding step 154/391
+[02:34:43.743275] Generation step 155/391
+[02:35:07.416389] Decoding step 155/391
+[02:35:07.670528] Generation step 156/391
+[02:35:31.347626] Decoding step 156/391
+[02:35:31.619620] Generation step 157/391
+[02:35:55.286263] Decoding step 157/391
+[02:35:55.551562] Generation step 158/391
+[02:36:19.226318] Decoding step 158/391
+[02:36:19.510033] Generation step 159/391
+[02:36:43.176978] Decoding step 159/391
+[02:36:43.446389] Generation step 160/391
+[02:37:07.109558] Decoding step 160/391
+[02:37:07.352337] Generation step 161/391
+[02:37:31.000605] Decoding step 161/391
+[02:37:31.257359] Generation step 162/391
+[02:37:54.922900] Decoding step 162/391
+[02:37:55.179375] Generation step 163/391
+[02:38:18.829140] Decoding step 163/391
+[02:38:19.109017] Generation step 164/391
+[02:38:42.781818] Decoding step 164/391
+[02:38:43.018314] Generation step 165/391
+[02:39:06.675402] Decoding step 165/391
+[02:39:06.941929] Generation step 166/391
+[02:39:30.605995] Decoding step 166/391
+[02:39:30.873357] Generation step 167/391
+[02:39:54.542676] Decoding step 167/391
+[02:39:54.794166] Generation step 168/391
+[02:40:18.478340] Decoding step 168/391
+[02:40:18.730815] Generation step 169/391
+[02:40:42.393664] Decoding step 169/391
+[02:40:42.655365] Generation step 170/391
+[02:41:06.338010] Decoding step 170/391
+[02:41:06.635704] Generation step 171/391
+[02:41:30.316613] Decoding step 171/391
+[02:41:30.595661] Generation step 172/391
+[02:41:54.272546] Decoding step 172/391
+[02:41:54.539309] Generation step 173/391
+[02:42:18.196454] Decoding step 173/391
+[02:42:18.468099] Generation step 174/391
+[02:42:42.131552] Decoding step 174/391
+[02:42:42.401780] Generation step 175/391
+[02:43:06.060637] Decoding step 175/391
+[02:43:06.332546] Generation step 176/391
+[02:43:30.023698] Decoding step 176/391
+[02:43:30.304552] Generation step 177/391
+[02:43:53.983050] Decoding step 177/391
+[02:43:54.243384] Generation step 178/391
+[02:44:17.904816] Decoding step 178/391
+[02:44:18.167813] Generation step 179/391
+[02:44:41.839082] Decoding step 179/391
+[02:44:42.095664] Generation step 180/391
+[02:45:05.766977] Decoding step 180/391
+[02:45:06.067329] Generation step 181/391
+[02:45:29.711420] Decoding step 181/391
+[02:45:29.997901] Generation step 182/391
+[02:45:53.665361] Decoding step 182/391
+[02:45:53.931786] Generation step 183/391
+[02:46:17.586787] Decoding step 183/391
+[02:46:17.834099] Generation step 184/391
+[02:46:41.507162] Decoding step 184/391
+[02:46:41.767097] Generation step 185/391
+[02:47:05.433936] Decoding step 185/391
+[02:47:05.700550] Generation step 186/391
+[02:47:29.358383] Decoding step 186/391
+[02:47:29.615847] Generation step 187/391
+[02:47:53.287234] Decoding step 187/391
+[02:47:53.535741] Generation step 188/391
+[02:48:17.226340] Decoding step 188/391
+[02:48:17.478838] Generation step 189/391
+[02:48:41.182539] Decoding step 189/391
+[02:48:41.457757] Generation step 190/391
+[02:49:05.118746] Decoding step 190/391
+[02:49:05.407768] Generation step 191/391
+[02:49:29.055254] Decoding step 191/391
+[02:49:29.298406] Generation step 192/391
+[02:49:52.960761] Decoding step 192/391
+[02:49:53.225070] Generation step 193/391
+[02:50:16.890730] Decoding step 193/391
+[02:50:17.158919] Generation step 194/391
+[02:50:40.814079] Decoding step 194/391
+[02:50:41.063343] Generation step 195/391
+[02:51:04.709838] Decoding step 195/391
+[02:51:04.992802] Generation step 196/391
+[02:51:28.644741] Decoding step 196/391
+[02:51:28.943230] Generation step 197/391
+[02:51:52.597661] Decoding step 197/391
+[02:51:52.876147] Generation step 198/391
+[02:52:16.569593] Decoding step 198/391
+[02:52:16.832232] Generation step 199/391
+[02:52:40.497989] Decoding step 199/391
+[02:52:40.753413] Generation step 200/391
+[02:53:04.428858] Decoding step 200/391
+[02:53:04.710317] Generation step 201/391
+[02:53:28.377347] Decoding step 201/391
+[02:53:28.640858] Generation step 202/391
+[02:53:52.325429] Decoding step 202/391
+[02:53:52.580402] Generation step 203/391
+[02:54:16.236685] Decoding step 203/391
+[02:54:16.509693] Generation step 204/391
+[02:54:40.231687] Decoding step 204/391
+[02:54:40.473505] Generation step 205/391
+[02:55:04.094852] Decoding step 205/391
+[02:55:04.379883] Generation step 206/391
+[02:55:28.060763] Decoding step 206/391
+[02:55:28.348615] Generation step 207/391
+[02:55:52.031521] Decoding step 207/391
+[02:55:52.286229] Generation step 208/391
+[02:56:15.970116] Decoding step 208/391
+[02:56:16.206040] Generation step 209/391
+[02:56:39.879642] Decoding step 209/391
+[02:56:40.139071] Generation step 210/391
+[02:57:03.831182] Decoding step 210/391
+[02:57:04.110859] Generation step 211/391
+[02:57:27.789152] Decoding step 211/391
+[02:57:28.077938] Generation step 212/391
+[02:57:51.745598] Decoding step 212/391
+[02:57:52.046250] Generation step 213/391
+[02:58:15.705397] Decoding step 213/391
+[02:58:15.976271] Generation step 214/391
+[02:58:39.659173] Decoding step 214/391
+[02:58:39.945454] Generation step 215/391
+[02:59:03.584921] Decoding step 215/391
+[02:59:03.863009] Generation step 216/391
+[02:59:27.546146] Decoding step 216/391
+[02:59:27.839501] Generation step 217/391
+[02:59:51.514315] Decoding step 217/391
+[02:59:51.782209] Generation step 218/391
+[03:00:15.443697] Decoding step 218/391
+[03:00:15.687376] Generation step 219/391
+[03:00:39.362457] Decoding step 219/391
+[03:00:39.613856] Generation step 220/391
+[03:01:03.272935] Decoding step 220/391
+[03:01:03.564143] Generation step 221/391
+[03:01:27.233376] Decoding step 221/391
+[03:01:27.503107] Generation step 222/391
+[03:01:51.177139] Decoding step 222/391
+[03:01:51.442157] Generation step 223/391
+[03:02:15.108955] Decoding step 223/391
+[03:02:15.365359] Generation step 224/391
+[03:02:39.017850] Decoding step 224/391
+[03:02:39.281203] Generation step 225/391
+[03:03:02.943045] Decoding step 225/391
+[03:03:03.203562] Generation step 226/391
+[03:03:26.884340] Decoding step 226/391
+[03:03:27.160463] Generation step 227/391
+[03:03:50.831472] Decoding step 227/391
+[03:03:51.077909] Generation step 228/391
+[03:04:14.749482] Decoding step 228/391
+[03:04:15.030103] Generation step 229/391
+[03:04:38.715469] Decoding step 229/391
+[03:04:38.965143] Generation step 230/391
+[03:05:02.685071] Decoding step 230/391
+[03:05:02.961080] Generation step 231/391
+[03:05:26.627537] Decoding step 231/391
+[03:05:26.921762] Generation step 232/391
+[03:05:50.590686] Decoding step 232/391
+[03:05:50.827874] Generation step 233/391
+[03:06:14.757663] Decoding step 233/391
+[03:06:14.992084] Generation step 234/391
+[03:06:38.654128] Decoding step 234/391
+[03:06:38.903239] Generation step 235/391
+[03:07:02.565523] Decoding step 235/391
+[03:07:02.863067] Generation step 236/391
+[03:07:26.543182] Decoding step 236/391
+[03:07:26.857559] Generation step 237/391
+[03:07:50.511254] Decoding step 237/391
+[03:07:50.767762] Generation step 238/391
+[03:08:14.450371] Decoding step 238/391
+[03:08:14.724266] Generation step 239/391
+[03:08:38.383705] Decoding step 239/391
+[03:08:38.626160] Generation step 240/391
+[03:09:02.327932] Decoding step 240/391
+[03:09:02.612190] Generation step 241/391
+[03:09:26.257866] Decoding step 241/391
+[03:09:26.568927] Generation step 242/391
+[03:09:50.248559] Decoding step 242/391
+[03:09:50.514345] Generation step 243/391
+[03:10:14.165032] Decoding step 243/391
+[03:10:14.414332] Generation step 244/391
+[03:10:38.076124] Decoding step 244/391
+[03:10:38.343939] Generation step 245/391
+[03:11:02.006653] Decoding step 245/391
+[03:11:02.284061] Generation step 246/391
+[03:11:25.963863] Decoding step 246/391
+[03:11:26.260886] Generation step 247/391
+[03:11:49.909869] Decoding step 247/391
+[03:11:50.191591] Generation step 248/391
+[03:12:13.855140] Decoding step 248/391
+[03:12:14.109478] Generation step 249/391
+[03:12:37.771766] Decoding step 249/391
+[03:12:38.034364] Generation step 250/391
+[03:13:01.699299] Decoding step 250/391
+[03:13:01.930711] Generation step 251/391
+[03:13:25.584744] Decoding step 251/391
+[03:13:25.831525] Generation step 252/391
+[03:13:49.481856] Decoding step 252/391
+[03:13:49.728713] Generation step 253/391
+[03:14:13.381465] Decoding step 253/391
+[03:14:13.681623] Generation step 254/391
+[03:14:37.354021] Decoding step 254/391
+[03:14:37.625776] Generation step 255/391
+[03:15:01.309443] Decoding step 255/391
+[03:15:01.582809] Generation step 256/391
+[03:15:25.259397] Decoding step 256/391
+[03:15:25.551072] Generation step 257/391
+[03:15:49.197703] Decoding step 257/391
+[03:15:49.448617] Generation step 258/391
+[03:16:13.118430] Decoding step 258/391
+[03:16:13.375005] Generation step 259/391
+[03:16:37.046602] Decoding step 259/391
+[03:16:37.300491] Generation step 260/391
+[03:17:00.975394] Decoding step 260/391
+[03:17:01.259266] Generation step 261/391
+[03:17:24.926126] Decoding step 261/391
+[03:17:25.202712] Generation step 262/391
+[03:17:48.886165] Decoding step 262/391
+[03:17:49.147607] Generation step 263/391
+[03:18:12.792033] Decoding step 263/391
+[03:18:13.047036] Generation step 264/391
+[03:18:36.715387] Decoding step 264/391
+[03:18:36.976757] Generation step 265/391
+[03:19:01.026972] Decoding step 265/391
+[03:19:01.315942] Generation step 266/391
+[03:19:24.993220] Decoding step 266/391
+[03:19:25.292392] Generation step 267/391
+[03:19:48.948095] Decoding step 267/391
+[03:19:49.207331] Generation step 268/391
+[03:20:12.865067] Decoding step 268/391
+[03:20:13.109113] Generation step 269/391
+[03:20:36.798826] Decoding step 269/391
+[03:20:37.075910] Generation step 270/391
+[03:21:00.746707] Decoding step 270/391
+[03:21:01.017605] Generation step 271/391
+[03:21:24.671504] Decoding step 271/391
+[03:21:24.926328] Generation step 272/391
+[03:21:48.589558] Decoding step 272/391
+[03:21:48.852920] Generation step 273/391
+[03:22:12.532744] Decoding step 273/391
+[03:22:12.801761] Generation step 274/391
+[03:22:36.487518] Decoding step 274/391
+[03:22:36.748398] Generation step 275/391
+[03:23:00.407163] Decoding step 275/391
+[03:23:00.690700] Generation step 276/391
+[03:23:24.366711] Decoding step 276/391
+[03:23:24.646879] Generation step 277/391
+[03:23:48.307498] Decoding step 277/391
+[03:23:48.554380] Generation step 278/391
+[03:24:12.223598] Decoding step 278/391
+[03:24:12.504755] Generation step 279/391
+[03:24:36.164581] Decoding step 279/391
+[03:24:36.427097] Generation step 280/391
+[03:25:00.116874] Decoding step 280/391
+[03:25:00.390796] Generation step 281/391
+[03:25:24.036564] Decoding step 281/391
+[03:25:24.338774] Generation step 282/391
+[03:25:48.010210] Decoding step 282/391
+[03:25:48.288421] Generation step 283/391
+[03:26:11.923177] Decoding step 283/391
+[03:26:12.198408] Generation step 284/391
+[03:26:35.896570] Decoding step 284/391
+[03:26:36.159905] Generation step 285/391
+[03:26:59.817687] Decoding step 285/391
+[03:27:00.075393] Generation step 286/391
+[03:27:23.769838] Decoding step 286/391
+[03:27:24.044394] Generation step 287/391
+[03:27:47.676855] Decoding step 287/391
+[03:27:47.914546] Generation step 288/391
+[03:28:11.604182] Decoding step 288/391
+[03:28:11.859357] Generation step 289/391
+[03:28:35.517737] Decoding step 289/391
+[03:28:35.782333] Generation step 290/391
+[03:28:59.451982] Decoding step 290/391
+[03:28:59.739063] Generation step 291/391
+[03:29:23.406149] Decoding step 291/391
+[03:29:23.710224] Generation step 292/391
+[03:29:47.391527] Decoding step 292/391
+[03:29:47.666885] Generation step 293/391
+[03:30:11.334640] Decoding step 293/391
+[03:30:11.605433] Generation step 294/391
+[03:30:35.294557] Decoding step 294/391
+[03:30:35.562674] Generation step 295/391
+[03:30:59.232918] Decoding step 295/391
+[03:30:59.504090] Generation step 296/391
+[03:31:23.181700] Decoding step 296/391
+[03:31:23.432377] Generation step 297/391
+[03:31:47.077686] Decoding step 297/391
+[03:31:47.360364] Generation step 298/391
+[03:32:11.049257] Decoding step 298/391
+[03:32:11.321618] Generation step 299/391
+[03:32:34.986204] Decoding step 299/391
+[03:32:35.229375] Generation step 300/391
+[03:32:58.929502] Decoding step 300/391
+[03:32:59.200454] Generation step 301/391
+[03:33:22.862183] Decoding step 301/391
+[03:33:23.145732] Generation step 302/391
+[03:33:46.826611] Decoding step 302/391
+[03:33:47.104515] Generation step 303/391
+[03:34:10.770217] Decoding step 303/391
+[03:34:11.007513] Generation step 304/391
+[03:34:34.696852] Decoding step 304/391
+[03:34:34.944603] Generation step 305/391
+[03:34:58.585118] Decoding step 305/391
+[03:34:58.861867] Generation step 306/391
+[03:35:22.545670] Decoding step 306/391
+[03:35:22.808967] Generation step 307/391
+[03:35:46.452208] Decoding step 307/391
+[03:35:46.716820] Generation step 308/391
+[03:36:10.400864] Decoding step 308/391
+[03:36:10.676799] Generation step 309/391
+[03:36:34.342321] Decoding step 309/391
+[03:36:34.582638] Generation step 310/391
+[03:36:58.260180] Decoding step 310/391
+[03:36:58.547389] Generation step 311/391
+[03:37:22.221545] Decoding step 311/391
+[03:37:22.497533] Generation step 312/391
+[03:37:46.163767] Decoding step 312/391
+[03:37:46.434680] Generation step 313/391
+[03:38:10.085540] Decoding step 313/391
+[03:38:10.332351] Generation step 314/391
+[03:38:34.012664] Decoding step 314/391
+[03:38:34.289277] Generation step 315/391
+[03:38:57.938740] Decoding step 315/391
+[03:38:58.210487] Generation step 316/391
+[03:39:21.890547] Decoding step 316/391
+[03:39:22.160228] Generation step 317/391
+[03:39:45.816653] Decoding step 317/391
+[03:39:46.077616] Generation step 318/391
+[03:40:09.768722] Decoding step 318/391
+[03:40:10.022547] Generation step 319/391
+[03:40:33.677717] Decoding step 319/391
+[03:40:33.925405] Generation step 320/391
+[03:40:57.614271] Decoding step 320/391
+[03:40:57.888639] Generation step 321/391
+[03:41:21.541924] Decoding step 321/391
+[03:41:21.803149] Generation step 322/391
+[03:41:45.461441] Decoding step 322/391
+[03:41:45.696213] Generation step 323/391
+[03:42:09.370577] Decoding step 323/391
+[03:42:09.628804] Generation step 324/391
+[03:42:33.282311] Decoding step 324/391
+[03:42:33.533183] Generation step 325/391
+[03:42:57.192710] Decoding step 325/391
+[03:42:57.456150] Generation step 326/391
+[03:43:21.148207] Decoding step 326/391
+[03:43:21.400279] Generation step 327/391
+[03:43:45.062549] Decoding step 327/391
+[03:43:45.336250] Generation step 328/391
+[03:44:08.987380] Decoding step 328/391
+[03:44:09.261774] Generation step 329/391
+[03:44:32.927648] Decoding step 329/391
+[03:44:33.183585] Generation step 330/391
+[03:44:56.848259] Decoding step 330/391
+[03:44:57.119311] Generation step 331/391
+[03:45:20.789470] Decoding step 331/391
+[03:45:21.070279] Generation step 332/391
+[03:45:44.757808] Decoding step 332/391
+[03:45:45.010141] Generation step 333/391
+[03:46:08.675822] Decoding step 333/391
+[03:46:08.919547] Generation step 334/391
+[03:46:32.550374] Decoding step 334/391
+[03:46:32.813364] Generation step 335/391
+[03:46:56.481258] Decoding step 335/391
+[03:46:56.734479] Generation step 336/391
+[03:47:20.414127] Decoding step 336/391
+[03:47:20.702590] Generation step 337/391
+[03:47:44.370136] Decoding step 337/391
+[03:47:44.619809] Generation step 338/391
+[03:48:08.284010] Decoding step 338/391
+[03:48:08.524981] Generation step 339/391
+[03:48:32.199251] Decoding step 339/391
+[03:48:32.449276] Generation step 340/391
+[03:48:56.111492] Decoding step 340/391
+[03:48:56.377896] Generation step 341/391
+[03:49:20.021263] Decoding step 341/391
+[03:49:20.299166] Generation step 342/391
+[03:49:43.949050] Decoding step 342/391
+[03:49:44.211351] Generation step 343/391
+[03:50:07.868290] Decoding step 343/391
+[03:50:08.120417] Generation step 344/391
+[03:50:31.778765] Decoding step 344/391
+[03:50:32.056217] Generation step 345/391
+[03:50:55.739386] Decoding step 345/391
+[03:50:56.022710] Generation step 346/391
+[03:51:19.681848] Decoding step 346/391
+[03:51:19.965632] Generation step 347/391
+[03:51:43.626179] Decoding step 347/391
+[03:51:43.868510] Generation step 348/391
+[03:52:07.546666] Decoding step 348/391
+[03:52:07.808039] Generation step 349/391
+[03:52:31.444839] Decoding step 349/391
+[03:52:31.711203] Generation step 350/391
+[03:52:55.367412] Decoding step 350/391
+[03:52:55.682243] Generation step 351/391
+[03:53:19.362737] Decoding step 351/391
+[03:53:19.646142] Generation step 352/391
+[03:53:43.277753] Decoding step 352/391
+[03:53:43.551826] Generation step 353/391
+[03:54:07.233733] Decoding step 353/391
+[03:54:07.492793] Generation step 354/391
+[03:54:31.164465] Decoding step 354/391
+[03:54:31.426338] Generation step 355/391
+[03:54:55.139371] Decoding step 355/391
+[03:54:55.426185] Generation step 356/391
+[03:55:19.097034] Decoding step 356/391
+[03:55:19.364411] Generation step 357/391
+[03:55:43.040629] Decoding step 357/391
+[03:55:43.317055] Generation step 358/391
+[03:56:07.010330] Decoding step 358/391
+[03:56:07.256981] Generation step 359/391
+[03:56:30.923195] Decoding step 359/391
+[03:56:31.193497] Generation step 360/391
+[03:56:54.865722] Decoding step 360/391
+[03:56:55.153617] Generation step 361/391
+[03:57:18.828278] Decoding step 361/391
+[03:57:19.104567] Generation step 362/391
+[03:57:42.781841] Decoding step 362/391
+[03:57:43.043610] Generation step 363/391
+[03:58:06.704835] Decoding step 363/391
+[03:58:06.964128] Generation step 364/391
+[03:58:30.655964] Decoding step 364/391
+[03:58:30.918305] Generation step 365/391
+[03:58:54.572034] Decoding step 365/391
+[03:58:54.846963] Generation step 366/391
+[03:59:18.505663] Decoding step 366/391
+[03:59:18.762509] Generation step 367/391
+[03:59:42.420374] Decoding step 367/391
+[03:59:42.661658] Generation step 368/391
+[04:00:06.332551] Decoding step 368/391
+[04:00:06.577665] Generation step 369/391
+[04:00:30.240649] Decoding step 369/391
+[04:00:30.503237] Generation step 370/391
+[04:00:54.202403] Decoding step 370/391
+[04:00:54.471771] Generation step 371/391
+[04:01:18.139819] Decoding step 371/391
+[04:01:18.438319] Generation step 372/391
+[04:01:42.112167] Decoding step 372/391
+[04:01:42.356894] Generation step 373/391
+[04:02:06.019503] Decoding step 373/391
+[04:02:06.254532] Generation step 374/391
+[04:02:29.919778] Decoding step 374/391
+[04:02:30.170381] Generation step 375/391
+[04:02:53.810515] Decoding step 375/391
+[04:02:54.072963] Generation step 376/391
+[04:03:17.746161] Decoding step 376/391
+[04:03:17.993562] Generation step 377/391
+[04:03:41.674579] Decoding step 377/391
+[04:03:41.944572] Generation step 378/391
+[04:04:05.631436] Decoding step 378/391
+[04:04:05.908497] Generation step 379/391
+[04:04:29.548443] Decoding step 379/391
+[04:04:29.804671] Generation step 380/391
+[04:04:53.475853] Decoding step 380/391
+[04:04:53.728298] Generation step 381/391
+[04:05:17.373586] Decoding step 381/391
+[04:05:17.661411] Generation step 382/391
+[04:05:41.338558] Decoding step 382/391
+[04:05:41.607600] Generation step 383/391
+[04:06:05.291212] Decoding step 383/391
+[04:06:05.556113] Generation step 384/391
+[04:06:29.233641] Decoding step 384/391
+[04:06:29.486466] Generation step 385/391
+[04:06:53.150963] Decoding step 385/391
+[04:06:53.423436] Generation step 386/391
+[04:07:17.099977] Decoding step 386/391
+[04:07:17.379109] Generation step 387/391
+[04:07:41.027714] Decoding step 387/391
+[04:07:41.273211] Generation step 388/391
+[04:08:04.934454] Decoding step 388/391
+[04:08:05.182559] Generation step 389/391
+[04:08:28.841607] Decoding step 389/391
+[04:08:29.076162] Generation step 390/391
+[04:08:52.747436] Decoding step 390/391
+[04:10:17.253657] Switch back from ema
+[04:10:17.255494] [04:10:17.396435] [04:10:17.397215] [04:10:19.884945] [04:10:38.861353] [04:10:39.003365] [04:10:40.670456] [04:10:53.085454] FID: 4.0320, Inception Score: 166.3840
+[jit_eval_galoiz_testcd] ===== Test D (50K) completed at 2026-05-27T04:12:18-05:00 =====

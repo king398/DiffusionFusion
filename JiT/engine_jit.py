@@ -52,11 +52,13 @@ class _DeviceBatchPrefetcher:
 
     def _move_batch(self, batch):
         non_blocking = self._use_cuda
-        return (
-            batch["latent"].to(self._device, non_blocking=non_blocking),
-            batch["dino"].to(self._device, non_blocking=non_blocking),
-            batch["y"].to(self._device, non_blocking=non_blocking).view(-1).long(),
-        )
+        labels = batch["y"].to(self._device, non_blocking=non_blocking).view(-1).long()
+        streams = {
+            name: tensor.to(self._device, non_blocking=non_blocking)
+            for name, tensor in batch.items()
+            if name not in ("y", "sample_id")
+        }
+        return streams, labels
 
     def _load_next_batch(self):
         batch = next(self._iterator)
@@ -89,8 +91,10 @@ class _DeviceBatchPrefetcher:
                 raise
             current_stream = torch.cuda.current_stream(self._device)
             current_stream.wait_stream(self._stream)
-            for tensor in batch:
+            streams, labels = batch
+            for tensor in streams.values():
                 tensor.record_stream(current_stream)
+            labels.record_stream(current_stream)
             self._preload()
             return batch
 
@@ -210,9 +214,9 @@ def train_one_epoch(
             accum_loss = torch.zeros((), device=device)
 
             for _micro_batch_idx in range(micro_batches_in_update):
-                latent, dino, labels = next(device_batches)
+                streams, labels = next(device_batches)
                 with torch.autocast('cuda', dtype=torch.bfloat16):
-                    loss = model(latent, dino, labels)
+                    loss = model(streams, labels)
 
                 accum_loss = accum_loss + loss.detach()
                 (loss / micro_batches_in_update).backward()
@@ -327,11 +331,15 @@ def evaluate(model_without_ddp, args, epoch, decoder, batch_size=64, log_writer=
                 labels_gen = torch.from_numpy(labels_gen).long().cuda()
 
                 with torch.amp.autocast('cuda', dtype=torch.bfloat16):
-                    sampled_latents, sampled_dino = model_without_ddp.generate(
-                        labels_gen)
+                    sampled = model_without_ddp.generate(labels_gen)
 
                 print("Decoding step {}/{}".format(step_idx, num_steps))
-                sampled_images = decode_with_decoder(decoder, sampled_latents, sampled_dino)
+                # The decoder is 2-stream; image-side and decoder-semantic
+                # stream names are the conventional "latent" / "dino" keys.
+                # Stage 4 may revisit this when EVA-02 joins as a third stream.
+                sampled_images = decode_with_decoder(
+                    decoder, sampled["latent"], sampled["dino"]
+                )
                 for sample_idx, sample in enumerate(sampled_images):
                     index = sample_idx + world_size * batch_size * \
                         step_idx + local_rank * batch_size

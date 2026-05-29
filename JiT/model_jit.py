@@ -7,6 +7,8 @@ import torch
 import torch.nn as nn
 import math
 import torch.nn.functional as F
+from dataclasses import dataclass
+from typing import Dict, List, Optional, Sequence
 from JiT.util.model_util import VisionRotaryEmbeddingFast, get_2d_sincos_pos_embed, RMSNorm
 
 
@@ -38,8 +40,12 @@ def init_optional_linear(module):
 
 
 def zero_adaln(module):
-    nn.init.constant_(module.adaLN_modulation[-1].weight, 0)
-    nn.init.constant_(module.adaLN_modulation[-1].bias, 0)
+    # Accept either a module exposing `.adaLN_modulation` (e.g. JiTBlock,
+    # CrossFusionDirection) or an `nn.Sequential` adaLN stack directly (the
+    # per-stream entries held in JointStreamBlock's ModuleDict).
+    adaln = module if isinstance(module, nn.Sequential) else module.adaLN_modulation
+    nn.init.constant_(adaln[-1].weight, 0)
+    nn.init.constant_(adaln[-1].bias, 0)
 
 
 def zero_final_layer(layer):
@@ -931,6 +937,758 @@ def JiT_Dual_B_2_4C_896(**kwargs):
     )
 
 
+def _jit_dual_b_2_4c_896_multistream(**kwargs):
+    # Accept either an explicit `specs=` from a Stage-2 Denoiser or fall back to
+    # the default 2-stream config (latent + dino) so legacy callers keep working.
+    if "specs" in kwargs:
+        # Strip dual-stream-only kwargs that the Denoiser no longer passes but
+        # an old caller might still set; JiTMultiStream gets everything else.
+        for legacy in ("in_channels", "dino_hidden_size", "dino_patches"):
+            kwargs.pop(legacy, None)
+        return JiTMultiStream(**kwargs)
+    for legacy in ("in_channels", "dino_hidden_size", "dino_patches"):
+        kwargs.pop(legacy, None)
+    return make_jit_dual_b_2_4c_896_multistream(**kwargs)
+
+
 JiT_models = {
-    'JiT-Dual-B/2-4C-896': JiT_Dual_B_2_4C_896,
+    'JiT-Dual-B/2-4C-896': _jit_dual_b_2_4c_896_multistream,
 }
+
+
+@dataclass(frozen=True)
+class StreamSpec:
+    """Declarative description of one input stream for JiTMultiStream.
+
+    All streams must produce the same post-embedder token grid (i.e.,
+    feature_spatial // patch_size must be identical across specs).
+    """
+
+    name: str
+    role: str  # "image_side" or "semantic"; gates structural CFG masks
+    feature_channels: int
+    feature_spatial: int
+    patch_size: int
+    tokenizer: str  # "latent" (BottleneckPatchEmbed) or "linear" (nn.Linear)
+    bottleneck_dim: Optional[int] = None
+    time_shift: float = 0.0
+    loss_weight: float = 1.0
+
+
+def _direction_key(src: str, tgt: str) -> str:
+    return f"{src}->{tgt}"
+
+
+class PairwiseCrossFusion(nn.Module):
+    """All-pairs cross-fusion between N streams.
+
+    For each ordered pair (src, tgt) with src != tgt a CrossFusionDirection
+    is instantiated. Forward uses pre-fusion snapshots for all sources, so
+    each direction sees the same context regardless of the iteration order.
+
+    Masking is applied as a multiplicative gate on the residual contribution
+    rather than as a Python branch around the module call — every direction
+    is always executed so that DDP static_graph and torch.compile remain
+    valid even when the mask changes between steps.
+    """
+
+    def __init__(
+        self,
+        specs: Sequence[StreamSpec],
+        hidden_size: int,
+        num_heads: int,
+        attn_drop: float = 0.0,
+        proj_drop: float = 0.0,
+    ):
+        super().__init__()
+        self.stream_names: List[str] = [spec.name for spec in specs]
+        self.directions = nn.ModuleDict({
+            _direction_key(src.name, tgt.name): CrossFusionDirection(
+                hidden_size,
+                num_heads,
+                attn_drop=attn_drop,
+                proj_drop=proj_drop,
+            )
+            for src in specs
+            for tgt in specs
+            if src.name != tgt.name
+        })
+
+    def forward(
+        self,
+        streams: Dict[str, torch.Tensor],
+        c: Dict[str, torch.Tensor],
+        feat_rope,
+        num_patches: Dict[str, int],
+        mask: Optional[Dict[str, Dict[str, bool]]] = None,
+    ) -> Dict[str, torch.Tensor]:
+        snapshots = {name: streams[name] for name in self.stream_names}
+        outputs = {name: snapshots[name] for name in self.stream_names}
+        for src in self.stream_names:
+            for tgt in self.stream_names:
+                if src == tgt:
+                    continue
+                direction = self.directions[_direction_key(src, tgt)]
+                fused = direction(
+                    snapshots[tgt],
+                    snapshots[src],
+                    c[tgt],
+                    feat_rope=feat_rope,
+                    num_patches=num_patches[tgt],
+                    context_num_patches=num_patches[src],
+                )
+                is_masked = (
+                    mask is not None
+                    and mask.get(src, {}).get(tgt, False)
+                )
+                gate = 0.0 if is_masked else 1.0
+                outputs[tgt] = outputs[tgt] + gate * (fused - snapshots[tgt])
+        return outputs
+
+
+class JointStreamAttention(nn.Module):
+    """All-to-all attention over the concatenated tokens of every stream.
+
+    V-Co-style joint attention: each stream keeps its own qkv/proj projections
+    and q/k norms, but all streams' queries attend over all streams' keys in a
+    single ``scaled_dot_product_attention`` call. Cross-stream masking is done
+    purely through an additive ``attn_mask`` bias (never a Python branch), so
+    no parameter is ever skipped and DDP static_graph / torch.compile stay
+    valid regardless of the mask.
+    """
+
+    def __init__(
+        self,
+        stream_names: Sequence[str],
+        hidden_size: int,
+        num_heads: int,
+        qkv_bias: bool = True,
+        qk_norm: bool = True,
+        attn_drop: float = 0.0,
+        proj_drop: float = 0.0,
+    ):
+        super().__init__()
+        if hidden_size % num_heads != 0:
+            raise ValueError(
+                f"hidden_size ({hidden_size}) must be divisible by num_heads ({num_heads})."
+            )
+        self.stream_names: List[str] = list(stream_names)
+        self.num_heads = num_heads
+        self.head_dim = hidden_size // num_heads
+
+        self.qkv = nn.ModuleDict({
+            name: nn.Linear(hidden_size, hidden_size * 3, bias=qkv_bias)
+            for name in self.stream_names
+        })
+        self.q_norm = nn.ModuleDict({
+            name: RMSNorm(self.head_dim) if qk_norm else nn.Identity()
+            for name in self.stream_names
+        })
+        self.k_norm = nn.ModuleDict({
+            name: RMSNorm(self.head_dim) if qk_norm else nn.Identity()
+            for name in self.stream_names
+        })
+        self.proj = nn.ModuleDict({
+            name: nn.Linear(hidden_size, hidden_size)
+            for name in self.stream_names
+        })
+        self.attn_drop = nn.Dropout(attn_drop)
+        self.proj_drop = nn.Dropout(proj_drop)
+
+    def forward(
+        self,
+        streams: Dict[str, torch.Tensor],
+        rope,
+        num_patches: Dict[str, int],
+        attn_mask: Optional[torch.Tensor],
+    ) -> Dict[str, torch.Tensor]:
+        q_chunks, k_chunks, v_chunks, lengths = [], [], [], []
+        for name in self.stream_names:
+            x = streams[name]
+            bsz, seq_len, channels = x.shape
+            qkv = self.qkv[name](x).reshape(
+                bsz, seq_len, 3, self.num_heads, self.head_dim
+            ).permute(2, 0, 3, 1, 4)
+            q, k, v = qkv[0], qkv[1], qkv[2]
+            q = apply_stream_rope(self.q_norm[name](q), rope, num_patches[name])
+            k = apply_stream_rope(self.k_norm[name](k), rope, num_patches[name])
+            q_chunks.append(q)
+            k_chunks.append(k)
+            v_chunks.append(v)
+            lengths.append(seq_len)
+
+        q = torch.cat(q_chunks, dim=2)
+        k = torch.cat(k_chunks, dim=2)
+        v = torch.cat(v_chunks, dim=2)
+
+        if attn_mask is not None:
+            # Match the (post-RoPE) query dtype so autocast/bf16 runs never hit
+            # a dtype mismatch in scaled_dot_product_attention.
+            attn_mask = attn_mask.to(q.dtype)
+
+        attn = torch.nn.functional.scaled_dot_product_attention(
+            q, k, v,
+            attn_mask=attn_mask,
+            dropout_p=self.attn_drop.p if self.training else 0.0,
+        )
+
+        outputs: Dict[str, torch.Tensor] = {}
+        for name, chunk in zip(self.stream_names, torch.split(attn, lengths, dim=2)):
+            bsz, _, seq_len, _ = chunk.shape
+            out = chunk.transpose(1, 2).reshape(bsz, seq_len, self.num_heads * self.head_dim)
+            out = self.proj[name](out)
+            outputs[name] = self.proj_drop(out)
+        return outputs
+
+
+class JointStreamBlock(nn.Module):
+    """One V-Co joint block: per-stream adaLN/norm/MLP around joint attention.
+
+    Mirrors DualStreamLocalBlock's adaLN(6-chunk) + gated-residual structure,
+    but the self-attention is replaced by a single all-to-all
+    JointStreamAttention shared across streams. Streams therefore interact at
+    every block instead of only at periodic cross-fusion layers.
+    """
+
+    def __init__(
+        self,
+        stream_names: Sequence[str],
+        hidden_size: int,
+        num_heads: int,
+        mlp_ratio: float = 4.0,
+        attn_drop: float = 0.0,
+        proj_drop: float = 0.0,
+    ):
+        super().__init__()
+        self.stream_names: List[str] = list(stream_names)
+        mlp_hidden_dim = int(hidden_size * mlp_ratio)
+        self.norm1 = nn.ModuleDict({
+            name: RMSNorm(hidden_size, eps=1e-6) for name in self.stream_names
+        })
+        self.norm2 = nn.ModuleDict({
+            name: RMSNorm(hidden_size, eps=1e-6) for name in self.stream_names
+        })
+        self.mlp = nn.ModuleDict({
+            name: SwiGLUFFN(hidden_size, mlp_hidden_dim, drop=proj_drop)
+            for name in self.stream_names
+        })
+        self.adaLN_modulation = nn.ModuleDict({
+            name: nn.Sequential(
+                nn.SiLU(),
+                nn.Linear(hidden_size, 6 * hidden_size, bias=True),
+            )
+            for name in self.stream_names
+        })
+        self.joint_attn = JointStreamAttention(
+            self.stream_names,
+            hidden_size,
+            num_heads=num_heads,
+            qkv_bias=True,
+            qk_norm=True,
+            attn_drop=attn_drop,
+            proj_drop=proj_drop,
+        )
+
+    def forward(
+        self,
+        streams: Dict[str, torch.Tensor],
+        c: Dict[str, torch.Tensor],
+        rope,
+        num_patches: Dict[str, int],
+        attn_mask: Optional[torch.Tensor],
+    ) -> Dict[str, torch.Tensor]:
+        attn_in: Dict[str, torch.Tensor] = {}
+        gates: Dict[str, tuple] = {}
+        for name in self.stream_names:
+            shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = (
+                self.adaLN_modulation[name](c[name]).chunk(6, dim=-1)
+            )
+            attn_in[name] = modulate(self.norm1[name](streams[name]), shift_msa, scale_msa)
+            gates[name] = (gate_msa, shift_mlp, scale_mlp, gate_mlp)
+
+        attn_out = self.joint_attn(attn_in, rope, num_patches, attn_mask)
+
+        outputs: Dict[str, torch.Tensor] = {}
+        for name in self.stream_names:
+            gate_msa, shift_mlp, scale_mlp, gate_mlp = gates[name]
+            x = streams[name] + gate_msa.unsqueeze(1) * attn_out[name]
+            x = x + gate_mlp.unsqueeze(1) * self.mlp[name](
+                modulate(self.norm2[name](x), shift_mlp, scale_mlp)
+            )
+            outputs[name] = x
+        return outputs
+
+
+class JiTMultiStream(nn.Module):
+    """Registry-driven N-stream JiT with periodic pairwise cross-fusion.
+
+    Mirrors JiTDualStream at N=2 (same shared embeddings, same block cadence,
+    same fusion semantics) while expressing per-stream modules as ModuleDicts
+    keyed by spec.name.
+    """
+
+    def __init__(
+        self,
+        specs: Sequence[StreamSpec],
+        input_size: int = 32,
+        hidden_size: int = 896,
+        depth: int = 12,
+        num_heads: int = 16,
+        mlp_ratio: float = 4.0,
+        attn_drop: float = 0.0,
+        proj_drop: float = 0.0,
+        num_classes: int = 1000,
+        in_context_len: int = 32,
+        in_context_start: int = 0,
+        dino_hidden_size_unused: Optional[int] = None,
+        cross_every: int = 4,
+        cross_start: int = 4,
+        fusion_mode: str = "pairwise",
+    ):
+        super().__init__()
+        del dino_hidden_size_unused  # kept for signature compatibility only
+        if not specs:
+            raise ValueError("JiTMultiStream requires at least one stream spec.")
+        if fusion_mode not in {"pairwise", "joint"}:
+            raise ValueError(
+                f"fusion_mode must be 'pairwise' or 'joint', got {fusion_mode!r}."
+            )
+        if hidden_size % num_heads != 0:
+            raise ValueError(
+                f"hidden_size ({hidden_size}) must be divisible by num_heads ({num_heads})."
+            )
+        head_dim = hidden_size // num_heads
+        if head_dim % 2 != 0:
+            raise ValueError(
+                f"Attention head dimension ({head_dim}) must be even for rotary embeddings."
+            )
+        if cross_every <= 0:
+            raise ValueError(f"cross_every must be positive, got {cross_every}.")
+        if fusion_mode == "joint" and in_context_len > 0 and in_context_start != 0:
+            # Joint attention concatenates every stream into one sequence whose
+            # length must stay constant across all blocks (single static graph /
+            # torch.compile). Requiring the prefix from block 0 guarantees that.
+            raise ValueError(
+                "joint fusion requires in_context_start == 0 when in_context_len > 0 "
+                "so the per-stream prefix is present from block 0 and the joint "
+                f"sequence length is constant; got in_context_start={in_context_start}."
+            )
+
+        seen_names = set()
+        for spec in specs:
+            if spec.name in seen_names:
+                raise ValueError(f"Duplicate stream name: {spec.name!r}")
+            seen_names.add(spec.name)
+            if spec.tokenizer not in {"latent", "linear"}:
+                raise ValueError(
+                    f"Unsupported tokenizer {spec.tokenizer!r} on stream {spec.name!r}."
+                )
+            if spec.tokenizer == "latent" and spec.bottleneck_dim is None:
+                raise ValueError(
+                    f"Stream {spec.name!r} uses the 'latent' tokenizer but bottleneck_dim is None."
+                )
+            if spec.feature_spatial % spec.patch_size != 0:
+                raise ValueError(
+                    f"Stream {spec.name!r}: feature_spatial ({spec.feature_spatial}) "
+                    f"must be divisible by patch_size ({spec.patch_size})."
+                )
+
+        tokens_per_side_values = {
+            spec.name: spec.feature_spatial // spec.patch_size for spec in specs
+        }
+        unique = set(tokens_per_side_values.values())
+        if len(unique) != 1:
+            raise ValueError(
+                "All streams must produce the same token grid; got "
+                f"tokens_per_side={tokens_per_side_values}."
+            )
+        tokens_per_side = unique.pop()
+        num_patches = tokens_per_side * tokens_per_side
+
+        self.specs = tuple(specs)
+        self.stream_names: List[str] = [spec.name for spec in specs]
+        self.specs_by_name: Dict[str, StreamSpec] = {spec.name: spec for spec in specs}
+        self.hidden_size = hidden_size
+        self.depth = depth
+        self.num_heads = num_heads
+        self.input_size = input_size
+        self.in_context_len = in_context_len
+        self.in_context_start = in_context_start
+        self.num_classes = num_classes
+        self.cross_every = cross_every
+        self.cross_start = cross_start
+        self.fusion_mode = fusion_mode
+        self.num_patches = num_patches
+        self.tokens_per_side = tokens_per_side
+        self.supports_dino_time = True
+
+        self.t_embedder = TimestepEmbedder(hidden_size)
+        self.y_embedder = LabelEmbedder(num_classes, hidden_size)
+
+        embedders = {}
+        for spec in specs:
+            if spec.tokenizer == "latent":
+                embedders[spec.name] = BottleneckPatchEmbed(
+                    img_size=spec.feature_spatial,
+                    patch_size=spec.patch_size,
+                    in_chans=spec.feature_channels,
+                    pca_dim=spec.bottleneck_dim,
+                    embed_dim=hidden_size,
+                    bias=True,
+                )
+            else:  # "linear"
+                embedders[spec.name] = nn.Linear(
+                    spec.feature_channels, hidden_size, bias=True
+                )
+        self.embedders = nn.ModuleDict(embedders)
+
+        self.pos_embed = nn.Parameter(
+            torch.zeros(1, num_patches, hidden_size), requires_grad=False
+        )
+
+        if in_context_len > 0:
+            self.in_context_posemb = nn.ParameterDict({
+                name: nn.Parameter(
+                    torch.zeros(1, in_context_len, hidden_size), requires_grad=True
+                )
+                for name in self.stream_names
+            })
+            for posemb in self.in_context_posemb.values():
+                torch.nn.init.normal_(posemb, std=0.02)
+        else:
+            self.in_context_posemb = None
+
+        half_head_dim = head_dim // 2
+        self.feat_rope = VisionRotaryEmbeddingFast(
+            dim=half_head_dim,
+            pt_seq_len=tokens_per_side,
+            num_cls_token=0,
+        )
+
+        if fusion_mode == "pairwise":
+            self.stream_blocks = nn.ModuleDict({
+                name: nn.ModuleList([
+                    DualStreamLocalBlock(
+                        hidden_size,
+                        num_heads,
+                        mlp_ratio=mlp_ratio,
+                        attn_drop=layer_drop(attn_drop, depth, i),
+                        proj_drop=layer_drop(proj_drop, depth, i),
+                    )
+                    for i in range(depth)
+                ])
+                for name in self.stream_names
+            })
+
+            self.cross_fusion_layers = tuple(
+                i for i in range(depth) if i >= cross_start and (i - cross_start) % cross_every == 0
+            )
+            self.cross_fusion = nn.ModuleDict({
+                str(i): PairwiseCrossFusion(
+                    specs,
+                    hidden_size,
+                    num_heads,
+                    attn_drop=layer_drop(attn_drop, depth, i),
+                    proj_drop=layer_drop(proj_drop, depth, i),
+                )
+                for i in self.cross_fusion_layers
+            })
+        else:  # "joint": V-Co-style joint attention at every block, no cross_fusion.
+            self.joint_blocks = nn.ModuleList([
+                JointStreamBlock(
+                    self.stream_names,
+                    hidden_size,
+                    num_heads,
+                    mlp_ratio=mlp_ratio,
+                    attn_drop=layer_drop(attn_drop, depth, i),
+                    proj_drop=layer_drop(proj_drop, depth, i),
+                )
+                for i in range(depth)
+            ])
+
+        final_layers = {}
+        for spec in specs:
+            if spec.tokenizer == "latent":
+                final_layers[spec.name] = FinalLayer(
+                    hidden_size, spec.patch_size, spec.feature_channels
+                )
+            else:
+                final_layers[spec.name] = DinoFinalLayer(
+                    hidden_size, spec.feature_channels
+                )
+        self.final_layers = nn.ModuleDict(final_layers)
+
+        self.initialize_weights()
+
+    def initialize_weights(self):
+        self.apply(init_linear)
+
+        pos_embed = get_2d_sincos_pos_embed(
+            self.pos_embed.shape[-1], int(self.num_patches ** 0.5)
+        )
+        self.pos_embed.data.copy_(
+            torch.from_numpy(pos_embed).float().unsqueeze(0)
+        )
+
+        for name, spec in self.specs_by_name.items():
+            if spec.tokenizer == "latent":
+                init_patch_embed(self.embedders[name])
+            else:
+                init_optional_linear(self.embedders[name])
+
+        nn.init.normal_(self.y_embedder.embedding_table.weight, std=0.02)
+        nn.init.normal_(self.t_embedder.mlp[0].weight, std=0.02)
+        nn.init.normal_(self.t_embedder.mlp[2].weight, std=0.02)
+
+        if self.fusion_mode == "pairwise":
+            for name in self.stream_names:
+                for block in self.stream_blocks[name]:
+                    zero_adaln(block)
+
+            for fusion in self.cross_fusion.values():
+                for direction in fusion.directions.values():
+                    zero_adaln(direction)
+        else:  # "joint"
+            for block in self.joint_blocks:
+                for adaln in block.adaLN_modulation.values():
+                    zero_adaln(adaln)
+
+        for name in self.stream_names:
+            zero_final_layer(self.final_layers[name])
+
+    @staticmethod
+    def _unpatchify(x, patch_size, out_channels):
+        c = out_channels
+        h = w = int(x.shape[1] ** 0.5)
+        assert h * w == x.shape[1]
+        x = x.reshape(shape=(x.shape[0], h, w, patch_size, patch_size, c))
+        x = torch.einsum('nhwpqc->nchpwq', x)
+        return x.reshape(shape=(x.shape[0], c, h * patch_size, h * patch_size))
+
+    def _make_context_tokens(self, y_emb, name):
+        base = y_emb.unsqueeze(1).repeat(1, self.in_context_len, 1)
+        return base + self.in_context_posemb[name]
+
+    def _build_joint_attn_bias(self, mask, device, dtype) -> torch.Tensor:
+        """Additive [L, L] attention bias for joint fusion.
+
+        Token layout is the streams concatenated in ``self.stream_names`` order,
+        each contributing ``in_context_len + num_patches`` tokens (the prefix is
+        present from block 0 in joint mode, so this length is constant). For an
+        entry ``mask[k_stream][q_stream] == True`` (block k_stream->q_stream, i.e.
+        q_stream must not read k_stream), the rows of q_stream are set to
+        ``finfo(dtype).min`` over the columns of k_stream. A no-op zeros tensor
+        is returned when nothing is masked; the caller always passes a tensor of
+        this same shape so the graph stays static under torch.compile / DDP.
+        """
+        per_stream_len = self.in_context_len + self.num_patches
+        total_len = per_stream_len * len(self.stream_names)
+        bias = torch.zeros(total_len, total_len, device=device, dtype=dtype)
+        if not mask:
+            return bias
+        neg = torch.finfo(dtype).min
+        spans = {
+            name: (idx * per_stream_len, (idx + 1) * per_stream_len)
+            for idx, name in enumerate(self.stream_names)
+        }
+        for k_stream in self.stream_names:
+            blocked = mask.get(k_stream)
+            if not blocked:
+                continue
+            k_start, k_end = spans[k_stream]
+            for q_stream in self.stream_names:
+                if blocked.get(q_stream, False):
+                    q_start, q_end = spans[q_stream]
+                    bias[q_start:q_end, k_start:k_end] = neg
+        return bias
+
+    def forward(
+        self,
+        streams: Dict[str, torch.Tensor],
+        t: torch.Tensor,
+        y: torch.Tensor,
+        stream_t: Optional[Dict[str, torch.Tensor]] = None,
+        mask: Optional[Dict[str, Dict[str, bool]]] = None,
+    ) -> Dict[str, torch.Tensor]:
+        y_emb = self.y_embedder(y)
+        c = {}
+        for name in self.stream_names:
+            stream_time = (
+                stream_t[name]
+                if stream_t is not None and name in stream_t
+                else t
+            )
+            c[name] = self.t_embedder(stream_time) + y_emb
+
+        tokens = {}
+        for name in self.stream_names:
+            spec = self.specs_by_name[name]
+            x = streams[name]
+            if spec.tokenizer == "latent":
+                x = self.embedders[name](x)
+            else:
+                x = x.flatten(2).transpose(1, 2)
+                x = self.embedders[name](x)
+            if x.shape[1] != self.num_patches:
+                raise ValueError(
+                    f"Stream {name!r} produced {x.shape[1]} tokens after embedding, "
+                    f"expected {self.num_patches}."
+                )
+            tokens[name] = x + self.pos_embed
+
+        num_patches_per_stream = {name: self.num_patches for name in self.stream_names}
+
+        context_inserted = False
+        if self.in_context_len > 0 and self.in_context_start == 0:
+            for name in self.stream_names:
+                tokens[name] = torch.cat(
+                    [self._make_context_tokens(y_emb, name), tokens[name]], dim=1
+                )
+            context_inserted = True
+
+        if self.fusion_mode == "joint":
+            # The prefix (if any) is already present from block 0, so the joint
+            # sequence length is constant. Always pass a same-shape [L, L] bias:
+            # the block bias when masking, otherwise a zeros no-op tensor. The
+            # mask never gates a module, so every parameter runs every step.
+            ref = tokens[self.stream_names[0]]
+            attn_bias = self._build_joint_attn_bias(mask, ref.device, ref.dtype)
+            for i in range(self.depth):
+                tokens = self.joint_blocks[i](
+                    tokens,
+                    c,
+                    self.feat_rope,
+                    num_patches_per_stream,
+                    attn_bias,
+                )
+        else:  # "pairwise"
+            for i in range(self.depth):
+                if (
+                    self.in_context_len > 0
+                    and not context_inserted
+                    and i == self.in_context_start
+                ):
+                    for name in self.stream_names:
+                        tokens[name] = torch.cat(
+                            [self._make_context_tokens(y_emb, name), tokens[name]], dim=1
+                        )
+                    context_inserted = True
+
+                for name in self.stream_names:
+                    tokens[name] = self.stream_blocks[name][i](
+                        tokens[name],
+                        c[name],
+                        self.feat_rope,
+                        num_patches=num_patches_per_stream[name],
+                    )
+
+                fusion_key = str(i)
+                if fusion_key in self.cross_fusion:
+                    tokens = self.cross_fusion[fusion_key](
+                        tokens,
+                        c,
+                        feat_rope=self.feat_rope,
+                        num_patches=num_patches_per_stream,
+                        mask=mask,
+                    )
+
+        prefix_len = self.in_context_len if context_inserted else 0
+        outputs: Dict[str, torch.Tensor] = {}
+        for name in self.stream_names:
+            spec = self.specs_by_name[name]
+            x = tokens[name][:, prefix_len:]
+            x = self.final_layers[name](x, c[name])
+            if spec.tokenizer == "latent":
+                outputs[name] = self._unpatchify(
+                    x, spec.patch_size, spec.feature_channels
+                )
+            else:
+                outputs[name] = x.transpose(1, 2).view(
+                    -1,
+                    spec.feature_channels,
+                    spec.feature_spatial,
+                    spec.feature_spatial,
+                )
+        return outputs
+
+
+def make_jit_dual_b_2_4c_896_multistream(**kwargs) -> JiTMultiStream:
+    """Two-stream multistream JiT matching JiT_Dual_B_2_4C_896."""
+    specs = [
+        StreamSpec(
+            name="latent",
+            role="image_side",
+            feature_channels=4,
+            feature_spatial=32,
+            patch_size=2,
+            tokenizer="latent",
+            bottleneck_dim=128,
+        ),
+        StreamSpec(
+            name="dino",
+            role="semantic",
+            feature_channels=768,
+            feature_spatial=16,
+            patch_size=1,
+            tokenizer="linear",
+        ),
+    ]
+    defaults = dict(
+        input_size=32,
+        hidden_size=896,
+        depth=12,
+        num_heads=16,
+        in_context_len=32,
+        in_context_start=0,
+        cross_every=4,
+        cross_start=4,
+    )
+    defaults.update(kwargs)
+    return JiTMultiStream(specs=specs, **defaults)
+
+
+def _remap_one_key(key: str) -> str:
+    if key.startswith("x_embedder."):
+        return "embedders.latent." + key[len("x_embedder."):]
+    if key.startswith("dino_embedder."):
+        return "embedders.dino." + key[len("dino_embedder."):]
+    if key == "latent_in_context_posemb":
+        return "in_context_posemb.latent"
+    if key == "dino_in_context_posemb":
+        return "in_context_posemb.dino"
+    if key.startswith("latent_blocks."):
+        return "stream_blocks.latent." + key[len("latent_blocks."):]
+    if key.startswith("dino_blocks."):
+        return "stream_blocks.dino." + key[len("dino_blocks."):]
+    if key.startswith("cross_fusion_blocks."):
+        rest = key[len("cross_fusion_blocks."):]
+        idx, sep, rest = rest.partition(".")
+        if not sep:
+            raise ValueError(f"Malformed cross-fusion key: {key!r}")
+        direction, sep2, param_path = rest.partition(".")
+        if not sep2:
+            raise ValueError(f"Malformed cross-fusion key: {key!r}")
+        if direction == "latent_from_dino":
+            new_direction = "dino->latent"
+        elif direction == "dino_from_latent":
+            new_direction = "latent->dino"
+        else:
+            raise ValueError(
+                f"Unknown cross-fusion direction in dual state dict: {direction!r}"
+            )
+        return f"cross_fusion.{idx}.directions.{new_direction}.{param_path}"
+    if key.startswith("latent_final_layer."):
+        return "final_layers.latent." + key[len("latent_final_layer."):]
+    if key.startswith("dino_final_layer."):
+        return "final_layers.dino." + key[len("dino_final_layer."):]
+    return key
+
+
+def remap_dual_to_multistream(state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+    """Translate a JiTDualStream state_dict into JiTMultiStream key names.
+
+    Used by Stage 2 to migrate existing dual-stream checkpoints onto the
+    registry-driven multistream model. Stage 1 ships only the helper and a
+    parity test.
+    """
+    return {_remap_one_key(key): val for key, val in state_dict.items()}

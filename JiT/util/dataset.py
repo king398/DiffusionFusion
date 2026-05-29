@@ -7,6 +7,7 @@ from JiT.util.feature_shards import (
     DatasetShardSpan,
     FeatureShardStore,
     LogicalShardSpan,
+    MultiStreamShardDataset,
     PairedRamLoadedShardDataset,
     inspect_feature_shards,
     load_feature_range_to_ram,
@@ -17,7 +18,11 @@ from JiT.util.feature_shards import (
 
 
 class RamLoadedShardDataset(PairedRamLoadedShardDataset):
-    """Training batch wrapper for paired latent and DINO RAM shards."""
+    """Legacy 2-stream training batch wrapper.
+
+    Retained so reverted-or-experimental code can still import the old name.
+    New code should use :class:`MultiStreamRamLoadedShardDataset`.
+    """
 
     def _format_batch(self, rows: Dict[str, np.ndarray]) -> Dict[str, torch.Tensor]:
         return {
@@ -29,10 +34,26 @@ class RamLoadedShardDataset(PairedRamLoadedShardDataset):
         }
 
 
+class MultiStreamRamLoadedShardDataset(MultiStreamShardDataset):
+    """N-stream training batch wrapper.
+
+    Emits dict batches keyed by stream name plus a ``y`` label tensor; drops
+    the ``sample_id`` column that the underlying dataset surfaces for
+    bookkeeping so the engine doesn't move it to GPU.
+    """
+
+    def _format_batch(self, rows: Dict[str, np.ndarray]) -> Dict[str, torch.Tensor]:
+        out = {name: torch.from_numpy(rows[name]) for name in self.stream_names}
+        out["y"] = torch.from_numpy(rows["y"])
+        return out
+
+
 __all__ = [
     "DatasetShardSpan",
     "FeatureShardStore",
     "LogicalShardSpan",
+    "MultiStreamRamLoadedShardDataset",
+    "MultiStreamShardDataset",
     "RamLoadedShardDataset",
     "inspect_feature_shards",
     "load_feature_range_to_ram",

@@ -1,0 +1,382 @@
+[eval_galoiz] NPROC=1 NUM_IMAGES=256 GEN_BSZ=64 CFG=2.9 interval=[0.1,1.0]
+[eval_galoiz] RESUME_DIR=/work/nvme/bgnp/msalunkhe/outputs/jit_dual_struct_cfg_mask_80ep
+[eval_galoiz] OUTPUT_DIR=/u/galoiz/DiffusionFusion-independent-backup/artifacts/eval_stage2_testb
+| distributed init (rank 0): env://, gpu 0
+| distributed timeout: 7200s
+[23:42:44.009485] Job directory: /u/galoiz/DiffusionFusion-independent-backup/JiT
+[23:42:44.009641] Arguments:
+Namespace(model='JiT-Dual-B/2-4C-896',
+latent_size=32,
+dino_patches=16,
+attn_dropout=0.0,
+proj_dropout=0.0,
+decoder_checkpoint='/work/nvme/bgnp/msalunkhe/outputs/jit_decoder_small_gan_lower_noise/checkpoint-last.pth',
+decoder_checkpoint_key='model_ema',
+dino_hidden_size=768,
+epochs=200,
+warmup_epochs=5,
+batch_size=128,
+accum_iter=1,
+lr=None,
+blr=5e-05,
+min_lr=1e-05,
+lr_schedule='cosine',
+weight_decay=0.0,
+ema_decay1=0.9999,
+ema_decay2=0.9996,
+P_mean=-0.8,
+P_std=0.8,
+noise_scale=1.0,
+t_eps=0.05,
+inference_t_eps=1e-05,
+dino_time_shift=0.0,
+label_drop_prob=0.1,
+latent_loss_weight=1.0,
+dino_loss_weight=1.0,
+seed=0,
+start_epoch=0,
+pin_mem=True,
+ram_shard_prefetch=True,
+cuda_prefetch=True,
+ddp_bucket_cap_mb=100,
+ddp_broadcast_buffers=False,
+ddp_gradient_as_bucket_view=True,
+ddp_static_graph=True,
+ddp_find_unused_parameters=False,
+compile_model=True,
+sampling_method='heun',
+num_sampling_steps=50,
+cfg=2.9,
+interval_min=0.1,
+interval_max=1.0,
+num_images=256,
+eval_freq=40,
+online_eval=False,
+evaluate_gen=True,
+gen_bsz=64,
+fid_stats_path='/u/galoiz/DiffusionFusion-independent-backup/JiT/fid_stats/jit_in256_stats.npz',
+data_path='/work/hdd/bgnp/msalunkhe/data/imagenet/',
+class_num=1000,
+dino_dir_name='imagenet256_dinov3_features',
+latent_dir_name='imagenet256_latents',
+streams_config=None,
+output_dir='/u/galoiz/DiffusionFusion-independent-backup/artifacts/eval_stage2_testb',
+resume='/work/nvme/bgnp/msalunkhe/outputs/jit_dual_struct_cfg_mask_80ep',
+save_last_freq=5,
+log_freq=5,
+use_wandb=True,
+wandb_project='jit',
+wandb_entity=None,
+wandb_run_name=None,
+wandb_mode='offline',
+wandb_eval_image_interval=10,
+eval_save_workers=4,
+device='cuda',
+world_size=1,
+local_rank=-1,
+dist_on_itp=False,
+dist_url='env://',
+dist_timeout_sec=7200,
+rank=0,
+gpu=0,
+distributed=True,
+dist_backend='nccl')
+wandb: Tracking run with wandb version 0.25.0
+wandb: W&B syncing is set to `offline` in this directory. Run `wandb online` or set WANDB_MODE=online to enable cloud syncing.
+wandb: Run data is saved locally in /u/galoiz/DiffusionFusion-independent-backup/artifacts/eval_stage2_testb/wandb/offline-run-20260526_234244-u23e5syp
+[23:42:44.705899] Stream specs: ['latent(role=image_side, ch=4, sp=32, p=2)', 'dino(role=semantic, ch=768, sp=16, p=1)']
+[23:42:48.917394] RAM shard loading enabled using 118 logical shards from imagenet256_dinov3_features.
+[23:42:48.918737] Approx max per-rank shard working set: 16.33 GiB.
+[23:42:48.919520] RAM shard prefetch enabled: peak per-rank working set can temporarily reach about 32.66 GiB while the next shard is staged.
+[23:42:48.920255] Epoch 0 steps per rank: 10009 (samples/rank=1281152, dropped_tail_per_rank=[16]).
+[23:42:48.920970] Gradient accumulation: 1 micro-batches/update -> 10009 optimizer updates per rank in epoch 0.
+[23:42:50.975303] Model = Denoiser(
+  (net): JiTMultiStream(
+    (t_embedder): TimestepEmbedder(
+      (mlp): Sequential(
+        (0): Linear(in_features=256, out_features=896, bias=True)
+        (1): SiLU()
+        (2): Linear(in_features=896, out_features=896, bias=True)
+      )
+    )
+    (y_embedder): LabelEmbedder(
+      (embedding_table): Embedding(1001, 896)
+    )
+    (embedders): ModuleDict(
+      (latent): BottleneckPatchEmbed(
+        (proj1): Conv2d(4, 128, kernel_size=(2, 2), stride=(2, 2), bias=False)
+        (proj2): Conv2d(128, 896, kernel_size=(1, 1), stride=(1, 1))
+      )
+      (dino): Linear(in_features=768, out_features=896, bias=True)
+    )
+    (in_context_posemb): ParameterDict(
+        (dino): Parameter containing: [torch.FloatTensor of size 1x32x896]
+        (latent): Parameter containing: [torch.FloatTensor of size 1x32x896]
+    )
+    (feat_rope): VisionRotaryEmbeddingFast()
+    (stream_blocks): ModuleDict(
+      (latent): ModuleList(
+        (0-11): 12 x DualStreamLocalBlock(
+          (norm1): RMSNorm()
+          (attn): StreamAttention(
+            (q_norm): RMSNorm()
+            (k_norm): RMSNorm()
+            (qkv): Linear(in_features=896, out_features=2688, bias=True)
+            (attn_drop): Dropout(p=0.0, inplace=False)
+            (proj): Linear(in_features=896, out_features=896, bias=True)
+            (proj_drop): Dropout(p=0.0, inplace=False)
+          )
+          (norm2): RMSNorm()
+          (mlp): SwiGLUFFN(
+            (w12): Linear(in_features=896, out_features=4778, bias=True)
+            (w3): Linear(in_features=2389, out_features=896, bias=True)
+            (ffn_dropout): Dropout(p=0.0, inplace=False)
+          )
+          (adaLN_modulation): Sequential(
+            (0): SiLU()
+            (1): Linear(in_features=896, out_features=5376, bias=True)
+          )
+        )
+      )
+      (dino): ModuleList(
+        (0-11): 12 x DualStreamLocalBlock(
+          (norm1): RMSNorm()
+          (attn): StreamAttention(
+            (q_norm): RMSNorm()
+            (k_norm): RMSNorm()
+            (qkv): Linear(in_features=896, out_features=2688, bias=True)
+            (attn_drop): Dropout(p=0.0, inplace=False)
+            (proj): Linear(in_features=896, out_features=896, bias=True)
+            (proj_drop): Dropout(p=0.0, inplace=False)
+          )
+          (norm2): RMSNorm()
+          (mlp): SwiGLUFFN(
+            (w12): Linear(in_features=896, out_features=4778, bias=True)
+            (w3): Linear(in_features=2389, out_features=896, bias=True)
+            (ffn_dropout): Dropout(p=0.0, inplace=False)
+          )
+          (adaLN_modulation): Sequential(
+            (0): SiLU()
+            (1): Linear(in_features=896, out_features=5376, bias=True)
+          )
+        )
+      )
+    )
+    (cross_fusion): ModuleDict(
+      (4): PairwiseCrossFusion(
+        (directions): ModuleDict(
+          (latent->dino): CrossFusionDirection(
+            (query_norm): RMSNorm()
+            (context_norm): RMSNorm()
+            (cross_attn): CrossStreamAttention(
+              (q_norm): RMSNorm()
+              (k_norm): RMSNorm()
+              (q_proj): Linear(in_features=896, out_features=896, bias=True)
+              (kv_proj): Linear(in_features=896, out_features=1792, bias=True)
+              (attn_drop): Dropout(p=0.0, inplace=False)
+              (proj): Linear(in_features=896, out_features=896, bias=True)
+              (proj_drop): Dropout(p=0.0, inplace=False)
+            )
+            (adaLN_modulation): Sequential(
+              (0): SiLU()
+              (1): Linear(in_features=896, out_features=2688, bias=True)
+            )
+          )
+          (dino->latent): CrossFusionDirection(
+            (query_norm): RMSNorm()
+            (context_norm): RMSNorm()
+            (cross_attn): CrossStreamAttention(
+              (q_norm): RMSNorm()
+              (k_norm): RMSNorm()
+              (q_proj): Linear(in_features=896, out_features=896, bias=True)
+              (kv_proj): Linear(in_features=896, out_features=1792, bias=True)
+              (attn_drop): Dropout(p=0.0, inplace=False)
+              (proj): Linear(in_features=896, out_features=896, bias=True)
+              (proj_drop): Dropout(p=0.0, inplace=False)
+            )
+            (adaLN_modulation): Sequential(
+              (0): SiLU()
+              (1): Linear(in_features=896, out_features=2688, bias=True)
+            )
+          )
+        )
+      )
+      (8): PairwiseCrossFusion(
+        (directions): ModuleDict(
+          (latent->dino): CrossFusionDirection(
+            (query_norm): RMSNorm()
+            (context_norm): RMSNorm()
+            (cross_attn): CrossStreamAttention(
+              (q_norm): RMSNorm()
+              (k_norm): RMSNorm()
+              (q_proj): Linear(in_features=896, out_features=896, bias=True)
+              (kv_proj): Linear(in_features=896, out_features=1792, bias=True)
+              (attn_drop): Dropout(p=0.0, inplace=False)
+              (proj): Linear(in_features=896, out_features=896, bias=True)
+              (proj_drop): Dropout(p=0.0, inplace=False)
+            )
+            (adaLN_modulation): Sequential(
+              (0): SiLU()
+              (1): Linear(in_features=896, out_features=2688, bias=True)
+            )
+          )
+          (dino->latent): CrossFusionDirection(
+            (query_norm): RMSNorm()
+            (context_norm): RMSNorm()
+            (cross_attn): CrossStreamAttention(
+              (q_norm): RMSNorm()
+              (k_norm): RMSNorm()
+              (q_proj): Linear(in_features=896, out_features=896, bias=True)
+              (kv_proj): Linear(in_features=896, out_features=1792, bias=True)
+              (attn_drop): Dropout(p=0.0, inplace=False)
+              (proj): Linear(in_features=896, out_features=896, bias=True)
+              (proj_drop): Dropout(p=0.0, inplace=False)
+            )
+            (adaLN_modulation): Sequential(
+              (0): SiLU()
+              (1): Linear(in_features=896, out_features=2688, bias=True)
+            )
+          )
+        )
+      )
+    )
+    (final_layers): ModuleDict(
+      (latent): FinalLayer(
+        (norm_final): RMSNorm()
+        (linear): Linear(in_features=896, out_features=16, bias=True)
+        (adaLN_modulation): Sequential(
+          (0): SiLU()
+          (1): Linear(in_features=896, out_features=1792, bias=True)
+        )
+      )
+      (dino): DinoFinalLayer(
+        (norm_final): RMSNorm()
+        (linear): Linear(in_features=896, out_features=768, bias=True)
+        (adaLN_modulation): Sequential(
+          (0): SiLU()
+          (1): Linear(in_features=896, out_features=1792, bias=True)
+        )
+      )
+    )
+  )
+)
+[23:42:50.979229] Number of trainable parameters: 376.418240M
+[23:42:58.149033] Rank 0: loaded decoder from /work/nvme/bgnp/msalunkhe/outputs/jit_decoder_small_gan_lower_noise/checkpoint-last.pth
+[23:42:58.150331] Base lr: 5.00e-05
+[23:42:58.151061] Actual lr: 2.50e-05
+[23:42:58.151763] Gradient accumulation steps: 1
+[23:42:58.152444] Effective batch size: 128
+[23:42:58.363189] torch.compile enabled; the first optimizer step may spend several minutes compiling before normal training logs appear.
+[23:42:59.314320] AdamW (
+Parameter Group 0
+    amsgrad: False
+    betas: (0.9, 0.95)
+    capturable: False
+    decoupled_weight_decay: True
+    differentiable: False
+    eps: 1e-08
+    foreach: None
+    fused: None
+    lr: 2.5e-05
+    maximize: False
+    weight_decay: 0.0
+
+Parameter Group 1
+    amsgrad: False
+    betas: (0.9, 0.95)
+    capturable: False
+    decoupled_weight_decay: True
+    differentiable: False
+    eps: 1e-08
+    foreach: None
+    fused: None
+    lr: 2.5e-05
+    maximize: False
+    weight_decay: 0.0
+)
+[23:43:00.244864] Detected dual-stream model checkpoint; applying remap_dual_to_multistream.
+[23:43:00.246458] Detected dual-stream model_ema1 checkpoint; applying remap_dual_to_multistream.
+[23:43:00.247498] Detected dual-stream model_ema2 checkpoint; applying remap_dual_to_multistream.
+[23:43:00.310750] Resumed checkpoint from /work/nvme/bgnp/msalunkhe/outputs/jit_dual_struct_cfg_mask_80ep
+[23:43:00.366815] Loaded optimizer state
+[23:43:00.368548] Evaluating checkpoint at 80 epoch
+[23:43:00.369822] Start evaluation at epoch 80
+[23:43:00.371766] Save to: /u/galoiz/DiffusionFusion-independent-backup/artifacts/eval_stage2_testb/heun-steps50-cfg2.9-interval0.1-1.0-image256-res32
+[23:43:00.372839] Switch to ema
+[23:43:00.376205] Generation step 0/4
+[23:43:24.592427] Decoding step 0/4
+[23:43:25.115917] Generation step 1/4
+[23:43:49.020843] Decoding step 1/4
+[23:43:49.465234] Generation step 2/4
+[23:44:13.363044] Decoding step 2/4
+[23:44:13.831180] Generation step 3/4
+[23:44:37.767318] Decoding step 3/4
+[23:44:38.197131] Switch back from ema
+wandb: You can sync this run to the cloud by running:
+wandb: wandb sync /u/galoiz/DiffusionFusion-independent-backup/artifacts/eval_stage2_testb/wandb/offline-run-20260526_234244-u23e5syp
+wandb: Find logs at: /u/galoiz/DiffusionFusion-independent-backup/artifacts/eval_stage2_testb/wandb/offline-run-20260526_234244-u23e5syp/logs
+[23:44:38.214619] Traceback (most recent call last):
+[23:44:38.214848]   File "/u/galoiz/DiffusionFusion-independent-backup/JiT/main_jit.py", line 734, in <module>
+    main(args)
+[23:44:38.214893]   File "/u/galoiz/DiffusionFusion-independent-backup/JiT/main_jit.py", line 626, in main
+    evaluate(
+[23:44:38.214927]   File "/u/galoiz/DiffusionFusion-independent-backup/.venv/lib/python3.11/site-packages/torch/utils/_contextlib.py", line 124, in decorate_context
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+[23:44:38.214959]   File "/u/galoiz/DiffusionFusion-independent-backup/JiT/engine_jit.py", line 393, in evaluate
+    metrics_dict = torch_fidelity.calculate_metrics(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[23:44:38.214991]   File "/u/galoiz/DiffusionFusion-independent-backup/.venv/lib/python3.11/site-packages/torch_fidelity/metrics.py", line 209, in calculate_metrics
+    vassert(input2 is not None or not need_input2, 'Second input is required for "fid" and "kid" metrics')
+[23:44:38.215021]   File "/u/galoiz/DiffusionFusion-independent-backup/.venv/lib/python3.11/site-packages/torch_fidelity/helpers.py", line 9, in vassert
+    raise ValueError(message)
+[23:44:38.215062] ValueError: Second input is required for "fid" and "kid" metrics
+[rank0]: Traceback (most recent call last):
+[rank0]:   File "/u/galoiz/DiffusionFusion-independent-backup/JiT/main_jit.py", line 734, in <module>
+[rank0]:     main(args)
+[rank0]:   File "/u/galoiz/DiffusionFusion-independent-backup/JiT/main_jit.py", line 626, in main
+[rank0]:     evaluate(
+[rank0]:   File "/u/galoiz/DiffusionFusion-independent-backup/.venv/lib/python3.11/site-packages/torch/utils/_contextlib.py", line 124, in decorate_context
+[rank0]:     return func(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/u/galoiz/DiffusionFusion-independent-backup/JiT/engine_jit.py", line 393, in evaluate
+[rank0]:     metrics_dict = torch_fidelity.calculate_metrics(
+[rank0]:                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/u/galoiz/DiffusionFusion-independent-backup/.venv/lib/python3.11/site-packages/torch_fidelity/metrics.py", line 209, in calculate_metrics
+[rank0]:     vassert(input2 is not None or not need_input2, 'Second input is required for "fid" and "kid" metrics')
+[rank0]:   File "/u/galoiz/DiffusionFusion-independent-backup/.venv/lib/python3.11/site-packages/torch_fidelity/helpers.py", line 9, in vassert
+[rank0]:     raise ValueError(message)
+[rank0]: ValueError: Second input is required for "fid" and "kid" metrics
+E0526 23:44:39.140000 160502 torch/distributed/elastic/multiprocessing/api.py:984] failed (exitcode: 1) local_rank: 0 (pid: 160508) of binary: /u/galoiz/DiffusionFusion-independent-backup/.venv/bin/python
+Traceback (most recent call last):
+  File "/u/galoiz/DiffusionFusion-independent-backup/.venv/bin/torchrun", line 6, in <module>
+    sys.exit(main())
+             ^^^^^^
+  File "/u/galoiz/DiffusionFusion-independent-backup/.venv/lib/python3.11/site-packages/torch/distributed/elastic/multiprocessing/errors/__init__.py", line 362, in wrapper
+    return f(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^
+  File "/u/galoiz/DiffusionFusion-independent-backup/.venv/lib/python3.11/site-packages/torch/distributed/run.py", line 991, in main
+    run(args)
+  File "/u/galoiz/DiffusionFusion-independent-backup/.venv/lib/python3.11/site-packages/torch/distributed/run.py", line 982, in run
+    elastic_launch(
+  File "/u/galoiz/DiffusionFusion-independent-backup/.venv/lib/python3.11/site-packages/torch/distributed/launcher/api.py", line 170, in __call__
+    return launch_agent(self._config, self._entrypoint, list(args))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/u/galoiz/DiffusionFusion-independent-backup/.venv/lib/python3.11/site-packages/torch/distributed/launcher/api.py", line 317, in launch_agent
+    raise ChildFailedError(
+torch.distributed.elastic.multiprocessing.errors.ChildFailedError: 
+============================================================
+main_jit.py FAILED
+------------------------------------------------------------
+Failures:
+  <NO_OTHER_FAILURES>
+------------------------------------------------------------
+Root Cause (first observed failure):
+[0]:
+  time      : 2026-05-26_23:44:39
+  host      : gh078.hsn.cm.delta.internal.ncsa.edu
+  rank      : 0 (local_rank: 0)
+  exitcode  : 1 (pid: 160508)
+  error_file: <N/A>
+  traceback : To enable traceback see: https://pytorch.org/docs/stable/elastic/errors.html
+============================================================

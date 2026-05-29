@@ -1,0 +1,5 @@
+Metadata-Version: 2.4
+Name: diffusionfusion
+Version: 0.0.0
+Summary: Local packaging for DiffusionFusion modules.
+Requires-Python: >=3.10
